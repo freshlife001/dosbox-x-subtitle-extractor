@@ -1,6 +1,7 @@
 #include "../include/subtitle_extractor.h"
 #include "../include/subtitle_format.h"
 #include "../include/gamelink_interface.h"
+#include "../include/ocr_bridge.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -28,6 +29,12 @@ struct Options {
     bool verbose = false;
     bool help = false;
 
+    // OCR 模式参数
+    bool ocr_mode = false;
+    uint32_t ocr_interval = 1000;    // OCR 间隔 (ms)
+    bool ocr_continuous = false;     // 持续 OCR 监控
+    float ocr_min_confidence = 0.5;  // 最小置信度
+
     // Scan 模式参数
     bool scan_mode = false;
     uint32_t scan_start = 0;         // 默认从 0 开始
@@ -53,6 +60,11 @@ void PrintUsage(const char* program) {
     std::cout << "  --timeout <ms>             Game Link timeout (default: 16)\n";
     std::cout << "  --verbose                  Verbose output\n";
     std::cout << "  --help, -h                 Show this help message\n";
+    std::cout << "\nOCR Mode (Vision OCR):\n";
+    std::cout << "  --ocr                      Enable OCR mode using macOS Vision framework\n";
+    std::cout << "  --ocr-interval <ms>        OCR interval (default: 1000)\n";
+    std::cout << "  --ocr-continuous           Continuously monitor screen for text changes\n";
+    std::cout << "  --ocr-min-confidence <f>   Minimum confidence threshold (default: 0.5)\n";
     std::cout << "\nScan Mode (experimental):\n";
     std::cout << "  --scan                     Enable memory scan mode\n";
     std::cout << "  --scan-start <addr>        Scan start address (hex, default: 0)\n";
@@ -112,6 +124,14 @@ bool ParseArguments(int argc, char* argv[], Options& options) {
             options.scan_text = argv[++i];
         } else if (arg == "--scan-offset" && i + 1 < argc) {
             options.scan_offset = std::stoul(argv[++i], nullptr, 16);
+        } else if (arg == "--ocr") {
+            options.ocr_mode = true;
+        } else if (arg == "--ocr-interval" && i + 1 < argc) {
+            options.ocr_interval = std::stoul(argv[++i]);
+        } else if (arg == "--ocr-continuous") {
+            options.ocr_continuous = true;
+        } else if (arg == "--ocr-min-confidence" && i + 1 < argc) {
+            options.ocr_min_confidence = std::stof(argv[++i]);
         }
     }
 
@@ -128,6 +148,131 @@ Subtitle::CodePage StringToCodePage(const std::string& name) {
     if (name == "cp949") return Subtitle::CodePage::CP949;
     if (name == "utf-8" || name == "utf8") return Subtitle::CodePage::UTF8;
     return Subtitle::CodePage::CP437;
+}
+
+// ============================================================================
+// OCR 模式实现 (使用 macOS Vision framework)
+// ============================================================================
+
+int RunOCRMode(const Options& options) {
+    GameLink::GameLinkInterface gameLink;
+
+    std::cout << "Initializing Game Link for OCR mode..." << std::endl;
+
+    if (!gameLink.Initialize()) {
+        std::cerr << "Error: Failed to initialize Game Link. Is DOSBox-X running?" << std::endl;
+        return 1;
+    }
+
+    std::cout << "Game: " << gameLink.GetGameName() << std::endl;
+    std::cout << "System: " << gameLink.GetSystemName() << std::endl;
+    std::cout << "OCR Interval: " << options.ocr_interval << " ms" << std::endl;
+    std::cout << "Min Confidence: " << options.ocr_min_confidence << std::endl;
+    std::cout << "\nPress Ctrl+C to stop\n" << std::endl;
+
+    // 注册信号处理
+    std::signal(SIGINT, SignalHandler);
+
+    // 记录上次识别的文字（用于检测变化）
+    std::string last_text;
+    int ocr_count = 0;
+    Subtitle::SubtitleFile subtitleFile;
+    uint64_t start_time = 0;
+
+    while (g_running) {
+        ocr_count++;
+
+        // 获取帧缓冲
+        uint16_t width, height;
+        auto frame_data = gameLink.GetFrameBufferData(width, height);
+
+        if (frame_data.empty()) {
+            if (options.verbose) {
+                std::cout << "No frame data available" << std::endl;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(options.ocr_interval));
+            continue;
+        }
+
+        if (options.verbose) {
+            std::cout << "\n=== OCR #" << ocr_count << " (frame: " << width << "x" << height << ") ===" << std::endl;
+        }
+
+        // 执行 Vision OCR
+        auto ocr_results = PerformOCROnBGRA(frame_data, width, height);
+
+        // 过滤低置信度结果并合并文本
+        std::string current_text;
+        for (const auto& result : ocr_results) {
+            if (result.confidence >= options.ocr_min_confidence && !result.text.empty()) {
+                if (!current_text.empty()) {
+                    current_text += "\n";
+                }
+                current_text += result.text;
+
+                if (options.verbose) {
+                    std::cout << "  [conf=" << result.confidence << "] "
+                              << "(" << result.x << "," << result.y << ") "
+                              << "\"" << result.text << "\"" << std::endl;
+                }
+            }
+        }
+
+        // 检查是否有变化
+        if (!current_text.empty() && current_text != last_text) {
+            std::cout << "\n[NEW TEXT] " << current_text << std::endl;
+
+            last_text = current_text;
+
+            // 记录字幕
+            if (!options.output_file.empty()) {
+                if (start_time == 0) {
+                    start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now().time_since_epoch()
+                    ).count();
+                }
+
+                uint32_t current_ms = static_cast<uint32_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now().time_since_epoch()
+                    ).count() - start_time
+                );
+
+                subtitleFile.AddSubtitle(current_ms, current_ms + options.ocr_interval, current_text);
+            }
+        }
+
+        // 如果不是持续模式，只执行一次
+        if (!options.ocr_continuous) {
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(options.ocr_interval));
+    }
+
+    // 导出字幕
+    if (!options.output_file.empty() && subtitleFile.GetSubtitleCount() > 0) {
+        std::string output_lower = options.output_file;
+        std::transform(output_lower.begin(), output_lower.end(), output_lower.begin(),
+                      [](char c) { return std::tolower(c); });
+
+        std::cout << "\nExporting " << subtitleFile.GetSubtitleCount()
+                  << " subtitles to: " << options.output_file << std::endl;
+
+        if (output_lower.find(".srt") != std::string::npos) {
+            subtitleFile.ExportToSRT(options.output_file);
+        } else if (output_lower.find(".ass") != std::string::npos ||
+                   output_lower.find(".ssa") != std::string::npos) {
+            subtitleFile.ExportToASS(options.output_file);
+        } else if (output_lower.find(".vtt") != std::string::npos) {
+            subtitleFile.ExportToVTT(options.output_file);
+        } else {
+            subtitleFile.ExportToJSON(options.output_file);
+        }
+    }
+
+    gameLink.Shutdown();
+    return 0;
 }
 
 // ============================================================================
@@ -382,7 +527,9 @@ int main(int argc, char* argv[]) {
     }
 
     // 选择运行模式
-    if (options.scan_mode) {
+    if (options.ocr_mode) {
+        return RunOCRMode(options);
+    } else if (options.scan_mode) {
         return RunScanMode(options);
     } else {
         return RunExtractMode(options);

@@ -10,6 +10,7 @@ set(SOURCES
     src/subtitle_extractor.cpp
     src/subtitle_format.cpp
     src/main.cpp
+    src/ocr_bridge.mm  # Objective-C++ 桥接文件
 )
 
 # 头文件目录
@@ -24,16 +25,24 @@ if(ICONV_LIBRARY)
     message(STATUS "Found iconv: ${ICONV_LIBRARY}")
     target_link_libraries(subtitle_extractor PRIVATE ${ICONV_LIBRARY})
 else()
-    # macOS 系统自带 iconv，在 libc 中
     message(STATUS "iconv not found as separate library, using builtin")
 endif()
 
-# 平台相关设置
-if(WIN32)
-    target_link_libraries(subtitle_extractor PRIVATE)
-elseif(APPLE)
+# macOS 特定框架
+if(APPLE)
     find_package(Threads REQUIRED)
-    target_link_libraries(subtitle_extractor PRIVATE Threads::Threads)
+    # Vision framework for OCR
+    find_library(VISION_FRAMEWORK Vision REQUIRED)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    target_link_libraries(subtitle_extractor PRIVATE
+        Threads::Threads
+        ${VISION_FRAMEWORK}
+        ${APPKIT_FRAMEWORK}
+        ${COREFOUNDATION_FRAMEWORK}
+    )
+elseif(WIN32)
+    target_link_libraries(subtitle_extractor PRIVATE)
 else()  # Linux
     find_package(Threads REQUIRED)
     target_link_libraries(subtitle_extractor PRIVATE Threads::Threads rt)

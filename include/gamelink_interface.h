@@ -166,8 +166,13 @@ public:
         uint32_t offset = 0
     );
 
+    /// 获取帧缓冲的原始数据
+    /// @param width 输出宽度
+    /// @param height 输出高度
+    /// @return 帧缓冲数据 (BGRA 格式，如果无帧返回空)
+    std::vector<uint8_t> GetFrameBufferData(uint16_t& width, uint16_t& height);
+
     /// 读取指定地址的内存块
-    /// @param start_addr 起始地址
     /// @param length 读取长度
     /// @param offset 内存偏移量（load address，用于读取游戏程序内存）
     /// @return 读取的数据

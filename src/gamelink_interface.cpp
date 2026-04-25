@@ -311,15 +311,49 @@ const uint8_t* GameLinkInterface::GetFrameBuffer(uint16_t& width, uint16_t& heig
         width = height = 0;
         return nullptr;
     }
-    
+
     width = m_pSharedMemory->frame.width;
     height = m_pSharedMemory->frame.height;
-    
+
     if (m_pSharedMemory->frame.image_fmt == 0) {
         return nullptr;  // No frame available
     }
-    
+
     return m_pSharedMemory->frame.buffer;
+}
+
+std::vector<uint8_t> GameLinkInterface::GetFrameBufferData(uint16_t& width, uint16_t& height) {
+    std::vector<uint8_t> result;
+
+    if (!IsConnected()) {
+        width = height = 0;
+        return result;
+    }
+
+    width = m_pSharedMemory->frame.width;
+    height = m_pSharedMemory->frame.height;
+
+    if (m_pSharedMemory->frame.image_fmt == 0 || width == 0 || height == 0) {
+        return result;  // No frame available
+    }
+
+    // 原始格式是 0xAARRGGBB (ARGB)，转换为 BGRA 用于 Vision OCR
+    size_t frame_size = width * height * 4;
+    result.resize(frame_size);
+
+    const uint8_t* src = m_pSharedMemory->frame.buffer;
+
+    // ARGB -> BGRA 转换
+    for (size_t i = 0; i < width * height; ++i) {
+        size_t offset = i * 4;
+        // src: A R G B -> result: B G R A
+        result[offset + 0] = src[offset + 3];  // B
+        result[offset + 1] = src[offset + 2];  // G
+        result[offset + 2] = src[offset + 1];  // R
+        result[offset + 3] = src[offset + 0];  // A
+    }
+
+    return result;
 }
 
 bool GameLinkInterface::AcquireMutex(uint32_t timeout_ms) {
