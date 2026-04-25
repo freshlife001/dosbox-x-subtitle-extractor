@@ -345,7 +345,7 @@ void GameLinkInterface::ReleaseMutex() {
 // 内存扫描功能
 // ============================================================================
 
-std::vector<uint8_t> GameLinkInterface::ReadMemoryBlock(uint32_t start_addr, size_t length) {
+std::vector<uint8_t> GameLinkInterface::ReadMemoryBlock(uint32_t start_addr, size_t length, uint32_t offset) {
     std::vector<uint8_t> result;
 
     if (!IsConnected() || length == 0) {
@@ -360,10 +360,11 @@ std::vector<uint8_t> GameLinkInterface::ReadMemoryBlock(uint32_t start_addr, siz
     }
 
     // 设置要读取的地址（每个地址读取一个字节）
+    // 地址 = 请求地址 + 偏移量（load address）
     m_pSharedMemory->peek.addr_count = static_cast<uint32_t>(read_size);
 
     for (size_t i = 0; i < read_size; ++i) {
-        m_pSharedMemory->peek.addr[i] = start_addr + i;
+        m_pSharedMemory->peek.addr[i] = start_addr + i + offset;
     }
 
     ReleaseMutex();
@@ -419,7 +420,8 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
     uint32_t end_addr,
     size_t min_length,
     const std::string& charset,
-    const std::string& search_text
+    const std::string& search_text,
+    uint32_t offset
 ) {
     std::vector<std::pair<uint32_t, std::string>> results;
 
@@ -441,7 +443,8 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
 
     std::cout << "Scanning memory range: 0x" << std::hex << start_addr
               << " - 0x" << end_addr << std::dec
-              << " (" << total_blocks << " blocks, charset=" << charset << ")" << std::endl;
+              << " (offset=0x" << std::hex << offset << std::dec
+              << ", " << total_blocks << " blocks, charset=" << charset << ")" << std::endl;
 
     // Shift-JIS 日文字符检测辅助函数
     auto isShiftJISFirstByte = [](uint8_t ch) {
@@ -460,7 +463,7 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
         uint32_t addr = start_addr + block * BLOCK_SIZE;
         size_t read_len = std::min(static_cast<size_t>(end_addr - addr), BLOCK_SIZE);
 
-        auto data = ReadMemoryBlock(addr, read_len);
+        auto data = ReadMemoryBlock(addr, read_len, offset);
 
         // 显示进度
         if (block % 10 == 0) {

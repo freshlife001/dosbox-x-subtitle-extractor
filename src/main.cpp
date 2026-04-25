@@ -38,6 +38,7 @@ struct Options {
     bool scan_debug = false;         // 显示调试信息
     std::string scan_charset = "japanese"; // 字符集过滤: "japanese", "ascii", "all"
     std::string scan_text;          // 指定要搜索的文本（可选）
+    uint32_t scan_offset = 0;       // 内存偏移量 (load address)
 };
 
 void PrintUsage(const char* program) {
@@ -61,6 +62,7 @@ void PrintUsage(const char* program) {
     std::cout << "  --scan-continuous          Continuously monitor for changes\n";
     std::cout << "  --scan-charset <type>      Character set filter: japanese, ascii, all (default: japanese)\n";
     std::cout << "  --scan-text <text>         Search for specific text pattern (Shift-JIS or UTF-8)\n";
+    std::cout << "  --scan-offset <addr>       Memory offset/load address (hex, default: 0)\n";
     std::cout << "  --scan-debug               Show raw data for debugging\n";
     std::cout << std::endl;
 }
@@ -108,6 +110,8 @@ bool ParseArguments(int argc, char* argv[], Options& options) {
             options.scan_charset = argv[++i];
         } else if (arg == "--scan-text" && i + 1 < argc) {
             options.scan_text = argv[++i];
+        } else if (arg == "--scan-offset" && i + 1 < argc) {
+            options.scan_offset = std::stoul(argv[++i], nullptr, 16);
         }
     }
 
@@ -186,7 +190,8 @@ int RunScanMode(const Options& options) {
             scan_end,
             options.scan_min_length,
             options.scan_charset,
-            options.scan_text
+            options.scan_text,
+            options.scan_offset
         );
 
         if (!results.empty()) {
