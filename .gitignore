@@ -1,0 +1,42 @@
+# CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.cmake
+
+# IDEs
+.vscode/
+.idea/
+*.sln
+*.vcxproj*
+*.xcodeproj/
+
+# Build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.dll
+*.dylib
+*.so
+
+# Output files
+*.srt
+*.ass
+*.ssa
+*.vtt
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.swp
+*.swo
+*~
+.classpath
+.project
+.settings/
