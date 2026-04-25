@@ -154,12 +154,14 @@ public:
     /// @param end_addr 结束地址
     /// @param min_length 最小字符串长度
     /// @param charset 字符集过滤: "japanese", "ascii", "all"
+    /// @param search_text 搜索特定文本（可选，UTF-8输入会被转换为Shift-JIS搜索）
     /// @return 找到的字符串列表 (地址, 内容)
     std::vector<std::pair<uint32_t, std::string>> ScanMemoryRange(
         uint32_t start_addr,
         uint32_t end_addr,
         size_t min_length = 4,
-        const std::string& charset = "japanese"
+        const std::string& charset = "japanese",
+        const std::string& search_text = ""
     );
 
     /// 读取指定地址的内存块
@@ -194,3 +196,6 @@ void SetScanDebug(bool debug);
 
 // Shift-JIS 到 UTF-8 转换函数
 std::string ShiftJISToUTF8(const std::string& input);
+
+// UTF-8 到 Shift-JIS 转换函数（用于搜索）
+std::string UTF8ToShiftJIS(const std::string& input);

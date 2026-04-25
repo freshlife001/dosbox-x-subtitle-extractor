@@ -61,6 +61,42 @@ std::string ShiftJISToUTF8(const std::string& input) {
     return std::string(outbuf.data(), converted_len);
 }
 
+// UTF-8 到 Shift-JIS 转换函数（用于搜索日文文本）
+std::string UTF8ToShiftJIS(const std::string& input) {
+    if (input.empty()) {
+        return input;
+    }
+
+    // 初始化 iconv
+    iconv_t cd = iconv_open("SHIFT_JIS", "UTF-8");
+    if (cd == (iconv_t)-1) {
+        cd = iconv_open("CP932", "UTF-8");
+        if (cd == (iconv_t)-1) {
+            std::cerr << "Warning: iconv_open failed for UTF-8 to Shift-JIS" << std::endl;
+            return input;
+        }
+    }
+
+    // 准备输入输出缓冲区
+    char* inbuf = const_cast<char*>(input.data());
+    size_t inbytesleft = input.size();
+
+    // Shift-JIS 输出最多是输入的 2 倍
+    size_t outbufsize = inbytesleft * 2 + 1;
+    std::vector<char> outbuf(outbufsize);
+    char* outbufptr = outbuf.data();
+    size_t outbytesleft = outbufsize;
+
+    // 执行转换
+    iconv(cd, &inbuf, &inbytesleft, &outbufptr, &outbytesleft);
+    iconv(cd, nullptr, nullptr, &outbufptr, &outbytesleft);
+
+    iconv_close(cd);
+
+    size_t converted_len = outbufsize - outbytesleft;
+    return std::string(outbuf.data(), converted_len);
+}
+
 #ifndef _WIN32
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -382,7 +418,8 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
     uint32_t start_addr,
     uint32_t end_addr,
     size_t min_length,
-    const std::string& charset
+    const std::string& charset,
+    const std::string& search_text
 ) {
     std::vector<std::pair<uint32_t, std::string>> results;
 
@@ -393,6 +430,14 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
     // 每次读取的块大小
     const size_t BLOCK_SIZE = sSharedMMapPeek_R2::PEEK_LIMIT;
     uint32_t total_blocks = (end_addr - start_addr) / BLOCK_SIZE + 1;
+
+    // 如果指定了搜索文本，转换为 Shift-JIS 进行搜索
+    std::string search_pattern;
+    if (!search_text.empty()) {
+        search_pattern = UTF8ToShiftJIS(search_text);
+        std::cout << "Searching for text: \"" << search_text << "\""
+                  << " (Shift-JIS: " << search_pattern.size() << " bytes)" << std::endl;
+    }
 
     std::cout << "Scanning memory range: 0x" << std::hex << start_addr
               << " - 0x" << end_addr << std::dec
@@ -505,6 +550,14 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
                 } else {
                     // all 模式：任何有效字符串
                     valid = has_ascii_letters || has_japanese;
+                }
+
+                // 如果指定了搜索文本，检查是否包含
+                if (valid && !search_pattern.empty()) {
+                    // 在原始 Shift-JIS 数据中搜索
+                    if (raw_text.find(search_pattern) == std::string::npos) {
+                        valid = false;  // 不包含搜索文本，跳过
+                    }
                 }
 
                 if (valid) {

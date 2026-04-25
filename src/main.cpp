@@ -37,6 +37,7 @@ struct Options {
     bool scan_continuous = false;    // 是否持续扫描（监控变化）
     bool scan_debug = false;         // 显示调试信息
     std::string scan_charset = "japanese"; // 字符集过滤: "japanese", "ascii", "all"
+    std::string scan_text;          // 指定要搜索的文本（可选）
 };
 
 void PrintUsage(const char* program) {
@@ -59,6 +60,7 @@ void PrintUsage(const char* program) {
     std::cout << "  --scan-min-len <n>         Minimum string length (default: 4)\n";
     std::cout << "  --scan-continuous          Continuously monitor for changes\n";
     std::cout << "  --scan-charset <type>      Character set filter: japanese, ascii, all (default: japanese)\n";
+    std::cout << "  --scan-text <text>         Search for specific text pattern (Shift-JIS or UTF-8)\n";
     std::cout << "  --scan-debug               Show raw data for debugging\n";
     std::cout << std::endl;
 }
@@ -104,6 +106,8 @@ bool ParseArguments(int argc, char* argv[], Options& options) {
             options.scan_debug = true;
         } else if (arg == "--scan-charset" && i + 1 < argc) {
             options.scan_charset = argv[++i];
+        } else if (arg == "--scan-text" && i + 1 < argc) {
+            options.scan_text = argv[++i];
         }
     }
 
@@ -177,7 +181,13 @@ int RunScanMode(const Options& options) {
             std::cout << "\n=== Scan #" << scan_count << " ===" << std::endl;
         }
 
-        auto results = gameLink.ScanMemoryRange(scan_start, scan_end, options.scan_min_length, options.scan_charset);
+        auto results = gameLink.ScanMemoryRange(
+            scan_start,
+            scan_end,
+            options.scan_min_length,
+            options.scan_charset,
+            options.scan_text
+        );
 
         if (!results.empty()) {
             std::cout << "Found " << results.size() << " strings:" << std::endl;
