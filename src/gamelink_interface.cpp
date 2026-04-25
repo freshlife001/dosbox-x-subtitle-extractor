@@ -4,6 +4,7 @@
 #include <cstring>
 #include <thread>
 #include <atomic>
+#include <iconv.h>
 
 // 外部全局运行标志
 extern std::atomic<bool> g_running;
@@ -13,6 +14,51 @@ static bool g_scan_debug = false;
 
 void SetScanDebug(bool debug) {
     g_scan_debug = debug;
+}
+
+// Shift-JIS 到 UTF-8 转换函数
+std::string ShiftJISToUTF8(const std::string& input) {
+    if (input.empty()) {
+        return input;
+    }
+
+    // 初始化 iconv
+    iconv_t cd = iconv_open("UTF-8//IGNORE", "SHIFT_JIS");
+    if (cd == (iconv_t)-1) {
+        // 如果 SHIFT_JIS 不行，尝试 CP932
+        cd = iconv_open("UTF-8//IGNORE", "CP932");
+        if (cd == (iconv_t)-1) {
+            // 最后尝试不忽略错误
+            cd = iconv_open("UTF-8", "SHIFT_JIS");
+            if (cd == (iconv_t)-1) {
+                std::cerr << "Warning: iconv_open failed for Shift-JIS" << std::endl;
+                return input;
+            }
+        }
+    }
+
+    // 准备输入输出缓冲区
+    char* inbuf = const_cast<char*>(input.data());
+    size_t inbytesleft = input.size();
+
+    // UTF-8 输出最多是输入的 4 倍
+    size_t outbufsize = inbytesleft * 4;
+    std::vector<char> outbuf(outbufsize);
+    char* outbufptr = outbuf.data();
+    size_t outbytesleft = outbufsize;
+
+    // 执行转换
+    size_t result = iconv(cd, &inbuf, &inbytesleft, &outbufptr, &outbytesleft);
+
+    // 重置 iconv 状态（处理多字节序列的残留）
+    iconv(cd, nullptr, nullptr, &outbufptr, &outbytesleft);
+
+    // 关闭 iconv
+    iconv_close(cd);
+
+    // 返回转换后的字符串
+    size_t converted_len = outbufsize - outbytesleft;
+    return std::string(outbuf.data(), converted_len);
 }
 
 #ifndef _WIN32
@@ -442,7 +488,12 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
 
             // 检查找到的字符串是否符合条件
             if (str_len >= min_length) {
-                std::string text(reinterpret_cast<const char*>(data.data() + str_start), str_len);
+                std::string raw_text(reinterpret_cast<const char*>(data.data() + str_start), str_len);
+
+                // 如果是日文模式，转换为 UTF-8
+                std::string display_text = (has_japanese && charset == "japanese")
+                    ? ShiftJISToUTF8(raw_text)
+                    : raw_text;
 
                 bool valid = false;
                 if (charset == "japanese") {
@@ -458,11 +509,12 @@ std::vector<std::pair<uint32_t, std::string>> GameLinkInterface::ScanMemoryRange
 
                 if (valid) {
                     uint32_t found_addr = addr + str_start;
-                    results.push_back({found_addr, text});
+                    // 存储 UTF-8 转换后的文本
+                    results.push_back({found_addr, display_text});
 
                     if (g_scan_debug) {
                         std::cout << "  [FOUND] 0x" << std::hex << found_addr << std::dec
-                                  << ": \"" << text << "\" (jp=" << has_japanese
+                                  << ": \"" << display_text << "\" (jp=" << has_japanese
                                   << ", ascii=" << has_ascii_letters << ")" << std::endl;
                     }
                 }

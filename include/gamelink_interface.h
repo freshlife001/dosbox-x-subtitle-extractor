@@ -191,3 +191,6 @@ private:
 
 // 全局调试开关
 void SetScanDebug(bool debug);
+
+// Shift-JIS 到 UTF-8 转换函数
+std::string ShiftJISToUTF8(const std::string& input);

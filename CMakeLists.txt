@@ -18,6 +18,16 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # 创建可执行文件
 add_executable(subtitle_extractor ${SOURCES})
 
+# 查找 iconv 库 (用于编码转换)
+find_library(ICONV_LIBRARY iconv)
+if(ICONV_LIBRARY)
+    message(STATUS "Found iconv: ${ICONV_LIBRARY}")
+    target_link_libraries(subtitle_extractor PRIVATE ${ICONV_LIBRARY})
+else()
+    # macOS 系统自带 iconv，在 libc 中
+    message(STATUS "iconv not found as separate library, using builtin")
+endif()
+
 # 平台相关设置
 if(WIN32)
     target_link_libraries(subtitle_extractor PRIVATE)
