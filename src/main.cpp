@@ -2,6 +2,7 @@
 #include "../include/subtitle_format.h"
 #include "../include/gamelink_interface.h"
 #include "../include/ocr_bridge.h"
+#include "../include/web_server.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -13,6 +14,9 @@
 
 // 全局运行标志（用于 Ctrl+C 停止）
 std::atomic<bool> g_running(true);
+
+// 全局 GameLink 实例（用于输入回调）
+GameLink::GameLinkInterface* g_gameLink = nullptr;
 
 void SignalHandler(int signal) {
     g_running = false;
@@ -28,6 +32,10 @@ struct Options {
     uint32_t timeout_ms = 16;
     bool verbose = false;
     bool help = false;
+
+    // Web 远程控制参数
+    bool web_remote = false;
+    int web_port = 8080;           // Web 服务器端口
 
     // OCR 模式参数
     bool ocr_mode = false;
@@ -60,6 +68,9 @@ void PrintUsage(const char* program) {
     std::cout << "  --timeout <ms>             Game Link timeout (default: 16)\n";
     std::cout << "  --verbose                  Verbose output\n";
     std::cout << "  --help, -h                 Show this help message\n";
+    std::cout << "\nWeb Remote Control:\n";
+    std::cout << "  --web                      Start web remote control server\n";
+    std::cout << "  --web-port <port>          Web server port (default: 8080)\n";
     std::cout << "\nOCR Mode (Vision OCR):\n";
     std::cout << "  --ocr                      Enable OCR mode using macOS Vision framework\n";
     std::cout << "  --ocr-interval <ms>        OCR interval (default: 1000)\n";
@@ -132,6 +143,10 @@ bool ParseArguments(int argc, char* argv[], Options& options) {
             options.ocr_continuous = true;
         } else if (arg == "--ocr-min-confidence" && i + 1 < argc) {
             options.ocr_min_confidence = std::stof(argv[++i]);
+        } else if (arg == "--web") {
+            options.web_remote = true;
+        } else if (arg == "--web-port" && i + 1 < argc) {
+            options.web_port = std::stoi(argv[++i]);
         }
     }
 
@@ -148,6 +163,110 @@ Subtitle::CodePage StringToCodePage(const std::string& name) {
     if (name == "cp949") return Subtitle::CodePage::CP949;
     if (name == "utf-8" || name == "utf8") return Subtitle::CodePage::UTF8;
     return Subtitle::CodePage::CP437;
+}
+
+// ============================================================================
+// Web 远程控制模式
+// ============================================================================
+
+int RunWebRemoteMode(const Options& options) {
+    GameLink::GameLinkInterface gameLink;
+    g_gameLink = &gameLink;
+
+    std::cout << "Initializing Game Link for Web Remote Control..." << std::endl;
+
+    if (!gameLink.Initialize()) {
+        std::cerr << "Error: Failed to initialize Game Link. Is DOSBox-X running?" << std::endl;
+        return 1;
+    }
+
+    std::cout << "Game: " << gameLink.GetGameName() << std::endl;
+    std::cout << "System: " << gameLink.GetSystemName() << std::endl;
+
+    // 注册信号处理
+    std::signal(SIGINT, SignalHandler);
+
+    // 创建 Web 服务器
+    WebRemoteServer webServer;
+
+    // 帧数据获取回调
+    auto frameGetter = [&gameLink](uint16_t& width, uint16_t& height) -> std::vector<uint8_t> {
+        return gameLink.GetFrameBufferData(width, height);
+    };
+
+    // 输入处理回调
+    auto inputCallback = [](const uint32_t* key_states, float mouse_dx, float mouse_dy, uint8_t mouse_btn) {
+        if (g_gameLink) {
+            g_gameLink->SendInput(key_states, mouse_dx, mouse_dy, mouse_btn);
+        }
+    };
+
+    // 启动 Web 服务器
+    if (!webServer.Start(options.web_port, frameGetter, inputCallback)) {
+        std::cerr << "Error: Failed to start web server" << std::endl;
+        gameLink.Shutdown();
+        return 1;
+    }
+
+    std::cout << "\nOpen " << webServer.GetURL() << " in your browser to control DOSBox-X" << std::endl;
+    std::cout << "Press Ctrl+C to stop\n" << std::endl;
+
+    // 主循环 - 同时运行 OCR
+    Subtitle::SubtitleFile subtitleFile;
+    std::string last_ocr_text;
+    uint64_t start_time = 0;
+
+    while (g_running && webServer.IsRunning()) {
+        // 获取帧并进行 OCR
+        uint16_t width, height;
+        auto frame_data = gameLink.GetFrameBufferData(width, height);
+
+        if (!frame_data.empty() && options.ocr_continuous) {
+            auto ocr_results = PerformOCROnBGRA(frame_data, width, height);
+
+            std::string current_text;
+            for (const auto& result : ocr_results) {
+                if (result.confidence >= options.ocr_min_confidence) {
+                    if (!current_text.empty()) current_text += "\n";
+                    current_text += result.text;
+                }
+            }
+
+            if (!current_text.empty() && current_text != last_ocr_text) {
+                std::cout << "[OCR] " << current_text << std::endl;
+                last_ocr_text = current_text;
+
+                if (!options.output_file.empty()) {
+                    if (start_time == 0) {
+                        start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::high_resolution_clock::now().time_since_epoch()
+                        ).count();
+                    }
+                    uint32_t current_ms = static_cast<uint32_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::high_resolution_clock::now().time_since_epoch()
+                        ).count() - start_time
+                    );
+                    subtitleFile.AddSubtitle(current_ms, current_ms + options.ocr_interval, current_text);
+                }
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(options.ocr_interval));
+    }
+
+    // 导出字幕
+    if (!options.output_file.empty() && subtitleFile.GetSubtitleCount() > 0) {
+        std::cout << "\nExporting " << subtitleFile.GetSubtitleCount()
+                  << " subtitles to: " << options.output_file << std::endl;
+        subtitleFile.ExportToSRT(options.output_file);
+    }
+
+    webServer.Stop();
+    gameLink.Shutdown();
+    g_gameLink = nullptr;
+
+    return 0;
 }
 
 // ============================================================================
@@ -527,7 +646,9 @@ int main(int argc, char* argv[]) {
     }
 
     // 选择运行模式
-    if (options.ocr_mode) {
+    if (options.web_remote) {
+        return RunWebRemoteMode(options);
+    } else if (options.ocr_mode) {
         return RunOCRMode(options);
     } else if (options.scan_mode) {
         return RunScanMode(options);

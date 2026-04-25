@@ -10,7 +10,8 @@ set(SOURCES
     src/subtitle_extractor.cpp
     src/subtitle_format.cpp
     src/main.cpp
-    src/ocr_bridge.mm  # Objective-C++ 桥接文件
+    src/ocr_bridge.mm
+    src/web_server.cpp
 )
 
 # 头文件目录
@@ -19,7 +20,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # 创建可执行文件
 add_executable(subtitle_extractor ${SOURCES})
 
-# 查找 iconv 库 (用于编码转换)
+# 查找 iconv 库
 find_library(ICONV_LIBRARY iconv)
 if(ICONV_LIBRARY)
     message(STATUS "Found iconv: ${ICONV_LIBRARY}")
@@ -31,18 +32,19 @@ endif()
 # macOS 特定框架
 if(APPLE)
     find_package(Threads REQUIRED)
-    # Vision framework for OCR
     find_library(VISION_FRAMEWORK Vision REQUIRED)
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
     target_link_libraries(subtitle_extractor PRIVATE
         Threads::Threads
         ${VISION_FRAMEWORK}
         ${APPKIT_FRAMEWORK}
         ${COREFOUNDATION_FRAMEWORK}
+        ${COREGRAPHICS_FRAMEWORK}
     )
 elseif(WIN32)
-    target_link_libraries(subtitle_extractor PRIVATE)
+    target_link_libraries(subtitle_extractor PRIVATE ws2_32)
 else()  # Linux
     find_package(Threads REQUIRED)
     target_link_libraries(subtitle_extractor PRIVATE Threads::Threads rt)

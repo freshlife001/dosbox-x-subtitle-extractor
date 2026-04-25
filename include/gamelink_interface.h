@@ -180,7 +180,19 @@ public:
 
     /// 获取共享内存指针 (用于直接访问)
     sSharedMemoryMap_R4* GetSharedMemory() { return m_pSharedMemory; }
-    
+
+    /// 发送键盘输入到 DOSBox-X
+    /// @param key_states 键盘状态数组 (8个 uint32_t，每个 bit 代表一个键)
+    /// @param mouse_dx 鼠标 X 增量 (可选)
+    /// @param mouse_dy 鼠盘 Y 增量 (可选)
+    /// @param mouse_btn 鼠盘按钮状态 (可选)
+    void SendInput(
+        const uint32_t* key_states,
+        float mouse_dx = 0,
+        float mouse_dy = 0,
+        uint8_t mouse_btn = 0
+    );
+
 private:
     sSharedMemoryMap_R4* m_pSharedMemory;
     std::vector<uint32_t> m_monitoredAddresses;

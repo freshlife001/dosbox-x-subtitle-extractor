@@ -376,6 +376,44 @@ void GameLinkInterface::ReleaseMutex() {
 }
 
 // ============================================================================
+// 输入发送功能
+// ============================================================================
+
+void GameLinkInterface::SendInput(
+    const uint32_t* key_states,
+    float mouse_dx,
+    float mouse_dy,
+    uint8_t mouse_btn
+) {
+    if (!IsConnected()) {
+        return;
+    }
+
+    if (!AcquireMutex(100)) {
+        return;
+    }
+
+    // 设置 input 结构
+    m_pSharedMemory->input.mouse_dx = mouse_dx;
+    m_pSharedMemory->input.mouse_dy = mouse_dy;
+    m_pSharedMemory->input.mouse_btn = mouse_btn;
+    m_pSharedMemory->input.ready = 1;  // 标记数据已准备好
+
+    // 复制键盘状态
+    for (int i = 0; i < 8; ++i) {
+        m_pSharedMemory->input.keyb_state[i] = key_states[i];
+    }
+
+    // 设置 WANT_KEYB 和 WANT_MOUSE 标志
+    m_pSharedMemory->flags |= sSharedMemoryMap_R4::FLAG_WANT_KEYB;
+    if (mouse_btn != 0 || mouse_dx != 0 || mouse_dy != 0) {
+        m_pSharedMemory->flags |= sSharedMemoryMap_R4::FLAG_WANT_MOUSE;
+    }
+
+    ReleaseMutex();
+}
+
+// ============================================================================
 // 内存扫描功能
 // ============================================================================
 
