@@ -2,6 +2,8 @@
 
 A real-time game subtitle extraction and translation tool using OCR and Game Link protocol.
 
+![Screenshot](docs/screenshot.png)
+
 ## Features
 
 - **OCR Mode**: Real-time text recognition using macOS Vision framework
