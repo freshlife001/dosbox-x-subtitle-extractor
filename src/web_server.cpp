@@ -293,8 +293,14 @@ void WebRemoteServer::HandleRequest(int client_socket) {
                 }
             }
 
+            // 解析鼠标数据
+            int mouse_x = ParseJsonInt(body, "mouseX");
+            int mouse_y = ParseJsonInt(body, "mouseY");
+            int mouse_btn = ParseJsonInt(body, "mouseBtn");
+
             if (m_inputCallback) {
-                m_inputCallback(key_states, 0, 0, 0);
+                // 将鼠标坐标转换为相对增量（简化处理：直接使用坐标）
+                m_inputCallback(key_states, mouse_x, mouse_y, mouse_btn);
             }
         }
 
