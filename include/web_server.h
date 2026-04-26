@@ -39,18 +39,24 @@ public:
     /// @param valid 是否有效（false 表示清除区域）
     using OCRRegionSetter = std::function<void(int x, int y, int width, int height, bool valid)>;
 
+    /// OCR 类型设置函数类型
+    /// @param ocr_type OCR 类型 ("paddle" 或 "vision")
+    using OCRTypeSetter = std::function<void(const std::string& ocr_type)>;
+
     WebRemoteServer();
     ~WebRemoteServer();
 
     /// 启动服务器
-    /// @param port 端口号 (默认 8080)
+    /// @param port 端口号 (默认 9091)
     /// @param frame_getter 获取帧数据的回调
     /// @param input_callback 处理输入的回调
     /// @param ocr_getter 获取 OCR 结果的回调（可选）
     /// @param ocr_region_setter 设置 OCR 区域的回调（可选）
+    /// @param ocr_type_setter 设置 OCR 类型的回调（可选）
     /// @return 成功返回 true
     bool Start(int port, FrameGetter frame_getter, InputCallback input_callback,
-               OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr);
+               OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr,
+               OCRTypeSetter ocr_type_setter = nullptr);
 
     /// 停止服务器
     void Stop();
@@ -71,6 +77,7 @@ private:
     InputCallback m_inputCallback;
     OCRGetter m_ocrGetter;
     OCRRegionSetter m_ocrRegionSetter;
+    OCRTypeSetter m_ocrTypeSetter;
 
     std::string m_htmlContent;  // 缓存 HTML 内容
 

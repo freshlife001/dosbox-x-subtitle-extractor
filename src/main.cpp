@@ -35,7 +35,7 @@ struct Options {
 
     // Web 远程控制参数
     bool web_remote = false;
-    int web_port = 8080;           // Web 服务器端口
+    int web_port = 9091;           // Web 服务器端口
 
     // OCR 模式参数
     bool ocr_mode = false;
@@ -70,7 +70,7 @@ void PrintUsage(const char* program) {
     std::cout << "  --help, -h                 Show this help message\n";
     std::cout << "\nWeb Remote Control:\n";
     std::cout << "  --web                      Start web remote control server\n";
-    std::cout << "  --web-port <port>          Web server port (default: 8080)\n";
+    std::cout << "  --web-port <port>          Web server port (default: 9091)\n";
     std::cout << "\nOCR Mode (Vision OCR):\n";
     std::cout << "  --ocr                      Enable OCR mode using macOS Vision framework\n";
     std::cout << "  --ocr-interval <ms>        OCR interval (default: 1000)\n";
@@ -197,6 +197,9 @@ int RunWebRemoteMode(const Options& options) {
     // OCR 结果存储（供 web 服务器使用）
     static std::string s_latest_ocr_text;
 
+    // OCR 类型存储（供 web 服务器使用）
+    static std::string s_ocr_type = "ollama";  // 默认使用 Ollama OCR
+
     // OCR 区域存储（供 web 服务器和 OCR 循环使用）
     static struct OCRRegion {
         int x = -1, y = -1, width = -1, height = -1;
@@ -224,8 +227,13 @@ int RunWebRemoteMode(const Options& options) {
         s_ocr_region.valid = valid;
     };
 
+    // OCR 类型设置回调
+    auto ocrTypeSetter = [](const std::string& type) {
+        s_ocr_type = type;
+    };
+
     // 启动 Web 服务器
-    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter)) {
+    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter, ocrTypeSetter)) {
         std::cerr << "Error: Failed to start web server" << std::endl;
         gameLink.Shutdown();
         return 1;
@@ -238,75 +246,102 @@ int RunWebRemoteMode(const Options& options) {
     Subtitle::SubtitleFile subtitleFile;
     std::string last_ocr_text;
     uint64_t start_time = 0;
+    auto last_ocr_time = std::chrono::high_resolution_clock::now();
 
     while (g_running && webServer.IsRunning()) {
-        // 获取帧并进行 OCR
-        uint16_t width, height;
-        auto frame_data = gameLink.GetFrameBufferData(width, height);
+        auto current_time = std::chrono::high_resolution_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_ocr_time).count();
 
-        if (!frame_data.empty() && options.ocr_continuous) {
-            // 如果设置了 OCR 区域，裁剪帧数据
-            std::vector<uint8_t> ocr_data;
-            int ocr_width = width;
-            int ocr_height = height;
+        // 检查是否到达 OCR 采样周期
+        if (elapsed_ms >= options.ocr_interval) {
+            last_ocr_time = current_time;
 
-            if (s_ocr_region.valid) {
-                // 裁剪 BGRA 帧数据到指定区域
-                int crop_x = std::max(0, std::min(s_ocr_region.x, (int)width - 1));
-                int crop_y = std::max(0, std::min(s_ocr_region.y, (int)height - 1));
-                int crop_w = std::min(s_ocr_region.width, (int)width - crop_x);
-                int crop_h = std::min(s_ocr_region.height, (int)height - crop_y);
+            // 获取帧并进行 OCR
+            uint16_t width, height;
+            auto frame_data = gameLink.GetFrameBufferData(width, height);
 
-                if (crop_w > 0 && crop_h > 0) {
-                    ocr_data.resize(crop_w * crop_h * 4);
-                    for (int y = 0; y < crop_h; ++y) {
-                        for (int x = 0; x < crop_w; ++x) {
-                            size_t src_offset = ((crop_y + y) * width + (crop_x + x)) * 4;
-                            size_t dst_offset = (y * crop_w + x) * 4;
-                            for (int b = 0; b < 4; ++b) {
-                                ocr_data[dst_offset + b] = frame_data[src_offset + b];
+            if (!frame_data.empty() && options.ocr_continuous) {
+                // 如果设置了 OCR 区域，裁剪帧数据
+                std::vector<uint8_t> ocr_data;
+                int ocr_width = width;
+                int ocr_height = height;
+
+                if (s_ocr_region.valid) {
+                    // 裁剪 BGRA 帧数据到指定区域
+                    int crop_x = std::max(0, std::min(s_ocr_region.x, (int)width - 1));
+                    int crop_y = std::max(0, std::min(s_ocr_region.y, (int)height - 1));
+                    int crop_w = std::min(s_ocr_region.width, (int)width - crop_x);
+                    int crop_h = std::min(s_ocr_region.height, (int)height - crop_y);
+
+                    if (crop_w > 0 && crop_h > 0) {
+                        ocr_data.resize(crop_w * crop_h * 4);
+                        for (int y = 0; y < crop_h; ++y) {
+                            for (int x = 0; x < crop_w; ++x) {
+                                size_t src_offset = ((crop_y + y) * width + (crop_x + x)) * 4;
+                                size_t dst_offset = (y * crop_w + x) * 4;
+                                for (int b = 0; b < 4; ++b) {
+                                    ocr_data[dst_offset + b] = frame_data[src_offset + b];
+                                }
                             }
                         }
+                        ocr_width = crop_w;
+                        ocr_height = crop_h;
                     }
-                    ocr_width = crop_w;
-                    ocr_height = crop_h;
+                } else {
+                    ocr_data = frame_data;  // 使用完整帧
                 }
-            } else {
-                ocr_data = frame_data;  // 使用完整帧
-            }
 
-            auto ocr_results = PerformOCROnBGRA(ocr_data, ocr_width, ocr_height);
-
-            std::string current_text;
-            for (const auto& result : ocr_results) {
-                if (result.confidence >= options.ocr_min_confidence) {
-                    if (!current_text.empty()) current_text += "\n";
-                    current_text += result.text;
+                // 根据 OCR 类型选择引擎
+                OCRType ocr_type;
+                if (s_ocr_type == "ollama") {
+                    ocr_type = OCRType::Ollama;
+                } else if (s_ocr_type == "vision") {
+                    ocr_type = OCRType::Vision;
+#ifdef USE_PADDLEOCR
+                } else if (s_ocr_type == "paddle") {
+                    ocr_type = OCRType::PaddleOCR;
+#endif
+                } else {
+                    ocr_type = OCRType::Ollama;  // 默认
                 }
-            }
+                auto ocr_start = std::chrono::high_resolution_clock::now();
+                auto ocr_results = PerformOCR(ocr_data, ocr_width, ocr_height, ocr_type);
+                auto ocr_end = std::chrono::high_resolution_clock::now();
+                auto ocr_ms = std::chrono::duration_cast<std::chrono::milliseconds>(ocr_end - ocr_start).count();
+                std::cout << "[OCR] elapsed: " << ocr_ms << " ms" << std::endl;
 
-            if (!current_text.empty() && current_text != last_ocr_text) {
-                std::cout << "[OCR] " << current_text << std::endl;
-                last_ocr_text = current_text;
-                s_latest_ocr_text = current_text;  // 更新 web OCR 显示
-
-                if (!options.output_file.empty()) {
-                    if (start_time == 0) {
-                        start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::high_resolution_clock::now().time_since_epoch()
-                        ).count();
+                std::string current_text;
+                for (const auto& result : ocr_results) {
+                    if (result.confidence >= options.ocr_min_confidence) {
+                        if (!current_text.empty()) current_text += "\n";
+                        current_text += result.text;
                     }
-                    uint32_t current_ms = static_cast<uint32_t>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::high_resolution_clock::now().time_since_epoch()
-                        ).count() - start_time
-                    );
-                    subtitleFile.AddSubtitle(current_ms, current_ms + options.ocr_interval, current_text);
+                }
+
+                if (!current_text.empty() && current_text != last_ocr_text) {
+                    std::cout << "[OCR] " << current_text << std::endl;
+                    last_ocr_text = current_text;
+                    s_latest_ocr_text = current_text;  // 更新 web OCR 显示
+
+                    if (!options.output_file.empty()) {
+                        if (start_time == 0) {
+                            start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::high_resolution_clock::now().time_since_epoch()
+                            ).count();
+                        }
+                        uint32_t current_ms = static_cast<uint32_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::high_resolution_clock::now().time_since_epoch()
+                            ).count() - start_time
+                        );
+                        subtitleFile.AddSubtitle(current_ms, current_ms + options.ocr_interval, current_text);
+                    }
                 }
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(options.ocr_interval));
+        // 小延迟防止 CPU 占用过高（不影响采样周期）
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
     // 导出字幕
@@ -371,8 +406,9 @@ int RunOCRMode(const Options& options) {
             std::cout << "\n=== OCR #" << ocr_count << " (frame: " << width << "x" << height << ") ===" << std::endl;
         }
 
-        // 执行 Vision OCR
-        auto ocr_results = PerformOCROnBGRA(frame_data, width, height);
+        // 执行 OCR（默认使用 Ollama）
+        OCRType ocr_type = OCRType::Ollama;
+        auto ocr_results = PerformOCR(frame_data, width, height, ocr_type);
 
         // 过滤低置信度结果并合并文本
         std::string current_text;

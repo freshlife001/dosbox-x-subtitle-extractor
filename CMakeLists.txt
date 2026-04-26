@@ -4,21 +4,44 @@ project(dosbox-x-subtitle-extractor)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 源文件
+# 编译选项：是否启用 PaddleOCR（默认关闭）
+option(USE_PADDLEOCR "Enable PaddleOCR support (requires paddle_inference library)" OFF)
+
+# 源文件（基础）
 set(SOURCES
     src/gamelink_interface.cpp
     src/subtitle_extractor.cpp
     src/subtitle_format.cpp
     src/main.cpp
-    src/ocr_bridge.mm
+    src/vision_ocr.mm
+    src/ollama_ocr.mm
     src/web_server.cpp
 )
 
 # 头文件目录
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+# OpenCV
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
+
+# 如果启用 PaddleOCR
+if(USE_PADDLEOCR)
+    # Paddle Inference library path
+    set(PADDLE_INFER_DIR ${CMAKE_SOURCE_DIR}/paddle_inference/paddle_inference_install_dir)
+    include_directories(${PADDLE_INFER_DIR}/paddle/include)
+
+    # 添加 PaddleOCR 源文件
+    list(APPEND SOURCES src/paddle_ocr.cpp)
+
+    message(STATUS "PaddleOCR enabled - using paddle_inference from: ${PADDLE_INFER_DIR}")
+else()
+    message(STATUS "PaddleOCR disabled - using Vision OCR only")
+endif()
+
 # 复制资源文件到构建目录
 file(COPY ${CMAKE_SOURCE_DIR}/resources DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
 
 # 创建可执行文件
 add_executable(subtitle_extractor ${SOURCES})
@@ -39,13 +62,34 @@ if(APPLE)
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+
     target_link_libraries(subtitle_extractor PRIVATE
         Threads::Threads
         ${VISION_FRAMEWORK}
         ${APPKIT_FRAMEWORK}
         ${COREFOUNDATION_FRAMEWORK}
         ${COREGRAPHICS_FRAMEWORK}
+        ${IMAGEIO_FRAMEWORK}
+        ${OpenCV_LIBS}
     )
+
+    # 如果启用 PaddleOCR，链接相关库
+    if(USE_PADDLEOCR)
+        set(PADDLE_LIB_DIR ${PADDLE_INFER_DIR}/paddle/lib)
+        target_link_libraries(subtitle_extractor PRIVATE
+            ${PADDLE_LIB_DIR}/libpaddle_inference.dylib
+            ${PADDLE_LIB_DIR}/libcommon.dylib
+            ${PADDLE_LIB_DIR}/libphi.dylib
+            ${PADDLE_LIB_DIR}/libphi_core.dylib
+        )
+
+        # Set rpath for paddle libraries
+        set_target_properties(subtitle_extractor PROPERTIES
+            INSTALL_RPATH ${PADDLE_LIB_DIR}
+            BUILD_RPATH ${PADDLE_LIB_DIR}
+        )
+    endif()
 elseif(WIN32)
     target_link_libraries(subtitle_extractor PRIVATE ws2_32)
 else()  # Linux
