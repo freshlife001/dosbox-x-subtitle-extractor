@@ -13,22 +13,26 @@ struct OCRResult {
 
 /// OCR 类型
 enum class OCRType {
-    Vision,     // macOS Vision framework
-    Ollama,     // Ollama VLM (LightOnOCR, LLaVA, etc.)
+#ifdef __APPLE__
+    Vision,     // macOS Vision framework (only on macOS)
+#endif
+    Ollama,     // Ollama VLM (cross-platform)
 #ifdef USE_PADDLEOCR
     PaddleOCR   // PaddleOCR v5
 #endif
 };
 
-/// 使用 macOS Vision framework 进行 OCR
+#ifdef __APPLE__
+/// 使用 macOS Vision framework 进行 OCR (macOS only)
 std::vector<OCRResult> PerformVisionOCR(
     const uint8_t* image_data,
     int width,
     int height,
     bool recognize_japanese = true
 );
+#endif
 
-/// 使用 Ollama VLM 进行 OCR
+/// 使用 Ollama VLM 进行 OCR (cross-platform)
 /// @param model_name Ollama 模型名称（如 "glm-ocr:latest", "llava"）
 /// @param ollama_url Ollama API 地址（默认 "http://localhost:11434"）
 std::vector<OCRResult> PerformOllamaOCR(

@@ -111,31 +111,3 @@ std::vector<OCRResult> PerformVisionOCR(
 
     return results;
 }
-
-// PerformOCR - 统一 OCR 入口
-// Forward declare PerformOllamaOCR (defined in ollama_ocr.mm)
-extern std::vector<OCRResult> PerformOllamaOCR(
-    const uint8_t* image_data,
-    int width,
-    int height,
-    const std::string& model_name,
-    const std::string& ollama_url
-);
-
-std::vector<OCRResult> PerformOCR(
-    const std::vector<uint8_t>& bgra_data,
-    int width,
-    int height,
-    OCRType ocr_type
-) {
-    if (ocr_type == OCRType::Ollama) {
-        return PerformOllamaOCR(bgra_data.data(), width, height);
-    }
-#ifdef USE_PADDLEOCR
-    if (ocr_type == OCRType::PaddleOCR) {
-        return PerformPaddleOCR(bgra_data.data(), width, height);
-    }
-#endif
-    // 默认使用 Vision OCR
-    return PerformVisionOCR(bgra_data.data(), width, height, true);
-}

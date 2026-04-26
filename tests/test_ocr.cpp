@@ -105,11 +105,14 @@ cv::Mat createGameScreenshot() {
 
 // Get OCR type name
 std::string getOCRTypeName(OCRType ocr_type) {
-    switch (ocr_type) {
-        case OCRType::Vision: return "Vision";
-        case OCRType::Ollama: return "Ollama";
-        default: return "Unknown";
-    }
+#ifdef __APPLE__
+    if (ocr_type == OCRType::Vision) return "Vision";
+#endif
+    if (ocr_type == OCRType::Ollama) return "Ollama";
+#ifdef USE_PADDLEOCR
+    if (ocr_type == OCRType::PaddleOCR) return "PaddleOCR";
+#endif
+    return "Unknown";
 }
 
 // Test OCR on image
@@ -162,8 +165,13 @@ void testVisionPerformance(const cv::Mat& image, int iterations = 5) {
 
 int main(int argc, char** argv) {
     std::cout << "========================================" << std::endl;
+#ifdef __APPLE__
     std::cout << "  OCR Performance Comparison Test" << std::endl;
     std::cout << "  Vision vs Ollama (glm-ocr)" << std::endl;
+#else
+    std::cout << "  OCR Performance Test" << std::endl;
+    std::cout << "  Ollama (glm-ocr) - Cross-platform" << std::endl;
+#endif
     std::cout << "========================================" << std::endl;
 
     // Test 1: English text
@@ -171,7 +179,9 @@ int main(int argc, char** argv) {
     cv::Mat english_img = createEnglishTestImage();
     cv::imwrite("test_english.png", english_img);
 
+#ifdef __APPLE__
     testOCR(english_img, "English", OCRType::Vision);
+#endif
     testOCR(english_img, "English", OCRType::Ollama);
 
     // Test 2: Japanese-style game screenshot
@@ -179,7 +189,9 @@ int main(int argc, char** argv) {
     cv::Mat japanese_img = createJapaneseTestImage();
     cv::imwrite("test_japanese.png", japanese_img);
 
+#ifdef __APPLE__
     testOCR(japanese_img, "Japanese", OCRType::Vision);
+#endif
     testOCR(japanese_img, "Japanese", OCRType::Ollama);
 
     // Test 3: Chinese-style
@@ -187,7 +199,9 @@ int main(int argc, char** argv) {
     cv::Mat chinese_img = createChineseTestImage();
     cv::imwrite("test_chinese.png", chinese_img);
 
+#ifdef __APPLE__
     testOCR(chinese_img, "Chinese", OCRType::Vision);
+#endif
     testOCR(chinese_img, "Chinese", OCRType::Ollama);
 
     // Test 4: Full game screenshot
@@ -195,13 +209,17 @@ int main(int argc, char** argv) {
     cv::Mat game_img = createGameScreenshot();
     cv::imwrite("test_game.png", game_img);
 
+#ifdef __APPLE__
     testOCR(game_img, "Game", OCRType::Vision);
+#endif
     testOCR(game_img, "Game", OCRType::Ollama);
 
+#ifdef __APPLE__
     // Test 5: Performance comparison (Vision only)
     std::cout << "\n[Test 5: Vision OCR Performance]" << std::endl;
     testVisionPerformance(english_img, 5);
     testVisionPerformance(game_img, 5);
+#endif
 
     // Summary
     std::cout << "\n========================================" << std::endl;

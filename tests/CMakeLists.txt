@@ -14,7 +14,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 # Source files
 set(TEST_SRC test_ocr.cpp)
 
-# OCR sources (macOS specific)
+# OCR sources - platform specific
 if(APPLE)
     find_library(VISION_FRAMEWORK Vision REQUIRED)
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
@@ -25,6 +25,7 @@ if(APPLE)
     set(OCR_SRC
         ${CMAKE_SOURCE_DIR}/../src/vision_ocr.mm
         ${CMAKE_SOURCE_DIR}/../src/ollama_ocr.mm
+        ${CMAKE_SOURCE_DIR}/../src/ocr_bridge.cpp
     )
 
     add_executable(test_ocr ${TEST_SRC} ${OCR_SRC})
@@ -38,8 +39,32 @@ if(APPLE)
         ${COREGRAPHICS_FRAMEWORK}
         ${IMAGEIO_FRAMEWORK}
     )
+elseif(WIN32)
+    set(OCR_SRC
+        ${CMAKE_SOURCE_DIR}/../src/ollama_ocr.cpp
+        ${CMAKE_SOURCE_DIR}/../src/ocr_bridge.cpp
+    )
+
+    add_executable(test_ocr ${TEST_SRC} ${OCR_SRC})
+
+    target_link_libraries(test_ocr PRIVATE
+        ${OpenCV_LIBS}
+        ws2_32
+    )
 else()
-    message(FATAL_ERROR "This test is designed for macOS with Vision framework")
+    # Linux
+    set(OCR_SRC
+        ${CMAKE_SOURCE_DIR}/../src/ollama_ocr.cpp
+        ${CMAKE_SOURCE_DIR}/../src/ocr_bridge.cpp
+    )
+
+    add_executable(test_ocr ${TEST_SRC} ${OCR_SRC})
+
+    find_package(Threads REQUIRED)
+    target_link_libraries(test_ocr PRIVATE
+        ${OpenCV_LIBS}
+        Threads::Threads
+    )
 endif()
 
 # Copy resources to build directory

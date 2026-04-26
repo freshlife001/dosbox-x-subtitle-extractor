@@ -13,9 +13,8 @@ set(SOURCES
     src/subtitle_extractor.cpp
     src/subtitle_format.cpp
     src/main.cpp
-    src/vision_ocr.mm
-    src/ollama_ocr.mm
     src/web_server.cpp
+    src/ocr_bridge.cpp
 )
 
 # 头文件目录
@@ -24,6 +23,22 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # OpenCV
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
+
+# 平台特定 OCR 源文件
+if(APPLE)
+    # macOS: 支持 Vision OCR 和 Ollama OCR (Objective-C++)
+    list(APPEND SOURCES src/vision_ocr.mm)
+    list(APPEND SOURCES src/ollama_ocr.mm)
+    message(STATUS "Platform: macOS - Vision OCR + Ollama OCR supported")
+elseif(WIN32)
+    # Windows: 仅支持 Ollama OCR (纯 C++ HTTP 实现)
+    list(APPEND SOURCES src/ollama_ocr.cpp)
+    message(STATUS "Platform: Windows - Ollama OCR only (Vision OCR not available)")
+else()
+    # Linux: 仅支持 Ollama OCR
+    list(APPEND SOURCES src/ollama_ocr.cpp)
+    message(STATUS "Platform: Linux - Ollama OCR only")
+endif()
 
 # 如果启用 PaddleOCR
 if(USE_PADDLEOCR)
@@ -36,7 +51,7 @@ if(USE_PADDLEOCR)
 
     message(STATUS "PaddleOCR enabled - using paddle_inference from: ${PADDLE_INFER_DIR}")
 else()
-    message(STATUS "PaddleOCR disabled - using Vision OCR only")
+    message(STATUS "PaddleOCR disabled")
 endif()
 
 # 复制资源文件到构建目录
@@ -91,10 +106,14 @@ if(APPLE)
         )
     endif()
 elseif(WIN32)
-    target_link_libraries(subtitle_extractor PRIVATE ws2_32)
+    # Windows: 使用 Winsock for HTTP
+    target_link_libraries(subtitle_extractor PRIVATE
+        ws2_32
+        ${OpenCV_LIBS}
+    )
 else()  # Linux
     find_package(Threads REQUIRED)
-    target_link_libraries(subtitle_extractor PRIVATE Threads::Threads rt)
+    target_link_libraries(subtitle_extractor PRIVATE Threads::Threads rt ${OpenCV_LIBS})
 endif()
 
 # 编译器选项
