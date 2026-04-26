@@ -127,6 +127,10 @@ let isTranslating = false;
 
 // Translation via Ollama (streaming)
 async function translateToLanguage(newText) {
+    // Skip if text is empty after removing whitespace
+    if (!newText || newText.trim() === '') {
+        return;
+    }
     if (isTranslating) return;
     isTranslating = true;
     translationText.textContent = '';  // Clear for streaming
