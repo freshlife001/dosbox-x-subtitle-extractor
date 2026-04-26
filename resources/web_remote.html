@@ -489,35 +489,77 @@ let lastFrameTime = 0;
 const frameInterval = 1000 / 30;  // 30 FPS
 let lastTime = 0;
 
+// Cache ImageData to avoid memory issues
+let cachedImageData = null;
+let cachedWidth = 0;
+let cachedHeight = 0;
+let isFetching = false;  // Prevent concurrent fetches
+
 function updateFrame() {
+    if (isFetching) return;  // Skip if already fetching
+
     const now = performance.now();
     if (now - lastFrameTime < frameInterval) {
         requestAnimationFrame(updateFrame);
         return;
     }
-    lastFrameTime = now;
+
+    isFetching = true;
 
     fetch('/frame')
-        .then(r => r.arrayBuffer())
+        .then(r => {
+            if (!r.ok) return null;
+            return r.arrayBuffer();
+        })
         .then(data => {
+            isFetching = false;
+
+            if (!data || data.byteLength < 4) {
+                requestAnimationFrame(updateFrame);
+                return;
+            }
+
             const view = new DataView(data);
             const width = view.getUint16(0, true);
             const height = view.getUint16(2, true);
-            const frameData = new Uint8Array(data, 4);
 
-            canvas.width = width;
-            canvas.height = height;
-
-            const imageData = ctx.createImageData(width, height);
-            // ARGB -> RGBA
-            for (let i = 0; i < width * height; i++) {
-                const offset = i * 4;
-                imageData.data[offset + 0] = frameData[offset + 2]; // R
-                imageData.data[offset + 1] = frameData[offset + 1]; // G
-                imageData.data[offset + 2] = frameData[offset + 0]; // B
-                imageData.data[offset + 3] = frameData[offset + 3]; // A
+            // Validate dimensions
+            if (width < 32 || height < 32 || width > 2048 || height > 2048) {
+                requestAnimationFrame(updateFrame);
+                return;  // Invalid dimensions
             }
-            ctx.putImageData(imageData, 0, 0);
+
+            // Check data size matches dimensions
+            const expectedSize = width * height * 4 + 4;
+            if (data.byteLength < expectedSize) {
+                requestAnimationFrame(updateFrame);
+                return;
+            }
+
+            lastFrameTime = now;
+
+            // Only resize canvas if dimensions changed
+            if (canvas.width !== width || canvas.height !== height) {
+                canvas.width = width;
+                canvas.height = height;
+                cachedImageData = null;
+            }
+
+            // Reuse or create ImageData
+            if (!cachedImageData) {
+                cachedImageData = ctx.createImageData(width, height);
+            }
+
+            // BGRA to RGBA conversion
+            const frameData = new Uint8Array(data, 4);
+            for (let i = 0; i < width * height * 4; i += 4) {
+                cachedImageData.data[i + 0] = frameData[i + 2]; // R
+                cachedImageData.data[i + 1] = frameData[i + 1]; // G
+                cachedImageData.data[i + 2] = frameData[i + 0]; // B
+                cachedImageData.data[i + 3] = 255;              // A (full opacity)
+            }
+
+            ctx.putImageData(cachedImageData, 0, 0);
 
             // Show region overlay
             showRegionOverlay();
@@ -543,10 +585,14 @@ function updateFrame() {
                     })
                     .catch(() => {});
             }
-        })
-        .catch(err => console.error('Frame error:', err));
 
-    requestAnimationFrame(updateFrame);
+            // Continue frame loop
+            requestAnimationFrame(updateFrame);
+        })
+        .catch(err => {
+            console.error('Frame error:', err);
+            requestAnimationFrame(updateFrame);  // Continue even on error
+        });
 }
 
 let frameCount = 0;

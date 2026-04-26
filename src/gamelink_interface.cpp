@@ -334,24 +334,18 @@ std::vector<uint8_t> GameLinkInterface::GetFrameBufferData(uint16_t& width, uint
     height = m_pSharedMemory->frame.height;
 
     if (m_pSharedMemory->frame.image_fmt == 0 || width == 0 || height == 0) {
+        // Debug: show why no frame
+        std::cerr << "No frame: image_fmt=" << m_pSharedMemory->frame.image_fmt
+                  << " width=" << width << " height=" << height << std::endl;
         return result;  // No frame available
     }
 
-    // 原始格式是 0xAARRGGBB (ARGB)，转换为 BGRA 用于 Vision OCR
+    // 原始格式 0xAARRGGBB 在小端序系统内存中实际是 BGRA
+    // Vision OCR 需要 BGRA，直接返回原始数据
     size_t frame_size = width * height * 4;
     result.resize(frame_size);
 
-    const uint8_t* src = m_pSharedMemory->frame.buffer;
-
-    // ARGB -> BGRA 转换
-    for (size_t i = 0; i < width * height; ++i) {
-        size_t offset = i * 4;
-        // src: A R G B -> result: B G R A
-        result[offset + 0] = src[offset + 3];  // B
-        result[offset + 1] = src[offset + 2];  // G
-        result[offset + 2] = src[offset + 1];  // R
-        result[offset + 3] = src[offset + 0];  // A
-    }
+    std::memcpy(result.data(), m_pSharedMemory->frame.buffer, frame_size);
 
     return result;
 }

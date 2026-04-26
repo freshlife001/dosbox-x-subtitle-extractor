@@ -205,7 +205,7 @@ void WebRemoteServer::HandleRequest(int client_socket) {
         auto frame_data = m_frameGetter(width, height);
 
         if (!frame_data.empty()) {
-            // 构建响应：前 4 字节是宽高，后面是 ARGB 数据
+            // 构建响应：前 4 字节是宽高，后面是 BGRA 数据（已从 ARGB 转换）
             std::vector<uint8_t> response_data;
             response_data.resize(4 + frame_data.size());
 
