@@ -48,9 +48,35 @@ static int ParseJsonInt(const std::string& json, const std::string& key) {
     return -1;
 }
 
+// 简单 JSON 解析：提取字符串值
+static std::string ParseJsonString(const std::string& json, const std::string& key) {
+    size_t key_pos = json.find("\"" + key + "\"");
+    if (key_pos == std::string::npos) return "";
+
+    size_t colon_pos = json.find(':', key_pos);
+    if (colon_pos == std::string::npos) return "";
+
+    // 跳过空白
+    size_t str_start = colon_pos + 1;
+    while (str_start < json.size() && (json[str_start] == ' ' || json[str_start] == '\t')) {
+        str_start++;
+    }
+
+    // 找字符串引号
+    if (str_start < json.size() && json[str_start] == '"') {
+        str_start++;
+        size_t str_end = json.find('"', str_start);
+        if (str_end != std::string::npos) {
+            return json.substr(str_start, str_end - str_start);
+        }
+    }
+
+    return "";
+}
+
 WebRemoteServer::WebRemoteServer()
     : m_running(false)
-    , m_port(8080)
+    , m_port(9091)
     , m_socket(-1)
 {
 }
@@ -60,7 +86,8 @@ WebRemoteServer::~WebRemoteServer() {
 }
 
 bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback input_callback,
-                              OCRGetter ocr_getter, OCRRegionSetter ocr_region_setter) {
+                              OCRGetter ocr_getter, OCRRegionSetter ocr_region_setter,
+                              OCRTypeSetter ocr_type_setter) {
     // 忽略 SIGPIPE 信号（防止客户端断开时崩溃）
     signal(SIGPIPE, SIG_IGN);
 
@@ -69,6 +96,7 @@ bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback in
     m_inputCallback = input_callback;
     m_ocrGetter = ocr_getter;
     m_ocrRegionSetter = ocr_region_setter;
+    m_ocrTypeSetter = ocr_type_setter;
 
     // 加载 HTML 文件
     m_htmlContent = LoadHTMLFile("resources/web_remote.html");
@@ -294,6 +322,23 @@ void WebRemoteServer::HandleRequest(int client_socket) {
                 std::cout << "[Region] OCR region set: (" << x << "," << y << ") " << w << "x" << h << std::endl;
             } else {
                 std::cout << "[Region] OCR region cleared (full screen)" << std::endl;
+            }
+        }
+
+        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}";
+
+    } else if (path == "/ocr-type" && method == "POST") {
+        // 处理 OCR 类型设置
+        size_t body_start = request.find("\r\n\r\n");
+        if (body_start != std::string::npos) {
+            std::string body = request.substr(body_start + 4);
+
+            // 解析 OCR 类型
+            std::string ocr_type = ParseJsonString(body, "type");
+
+            if (m_ocrTypeSetter && !ocr_type.empty()) {
+                m_ocrTypeSetter(ocr_type);
+                std::cout << "[OCR] OCR type set to: " << ocr_type << std::endl;
             }
         }
 

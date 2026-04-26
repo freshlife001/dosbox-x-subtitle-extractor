@@ -29,6 +29,10 @@
     <div id="controls">
         <button id="select-region">Select OCR Region</button>
         <button id="reset-region">Reset Region</button>
+        <select id="ocr-type-select">
+            <option value="ollama">Ollama OCR</option>
+            <option value="vision">Vision OCR</option>
+        </select>
         <select id="lang-select">
             <option value="zh">中文</option>
             <option value="en">English</option>
@@ -60,6 +64,36 @@ const modeInfo = document.getElementById('mode-info');
 const selectBtn = document.getElementById('select-region');
 const resetBtn = document.getElementById('reset-region');
 const langSelect = document.getElementById('lang-select');
+const ocrTypeSelect = document.getElementById('ocr-type-select');
+
+// OCR type configuration
+const OCR_TYPES = { ollama: 'Ollama OCR', vision: 'Vision OCR' };
+let currentOcrType = 'ollama';  // Default: Ollama OCR
+
+function saveOcrTypeConfig() {
+    localStorage.setItem('ocrType', currentOcrType);
+    // Send to backend
+    fetch('/ocr-type', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: currentOcrType })
+    }).catch(() => {});
+}
+
+function loadOcrTypeConfig() {
+    const saved = localStorage.getItem('ocrType');
+    if (saved && OCR_TYPES[saved]) {
+        currentOcrType = saved;
+        ocrTypeSelect.value = saved;
+    }
+    // Send initial OCR type to backend
+    saveOcrTypeConfig();
+}
+
+ocrTypeSelect.addEventListener('change', () => {
+    currentOcrType = ocrTypeSelect.value;
+    saveOcrTypeConfig();
+});
 
 // Language configuration
 const LANG_NAMES = {
@@ -599,6 +633,7 @@ let frameCount = 0;
 loadSavedRegion();  // Restore saved OCR region
 loadTranslationPos();  // Restore saved translation box position
 loadLangConfig();  // Restore saved language config
+loadOcrTypeConfig();  // Restore saved OCR type config
 updateFrame();
     </script>
 </body>
