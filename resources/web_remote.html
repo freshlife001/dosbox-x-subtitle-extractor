@@ -14,6 +14,7 @@
         #translation-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #f80 50%); }
         #controls { position: fixed; bottom: 10px; left: 10px; color: #fff; font-family: monospace; }
         #controls button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+        #controls select { margin: 5px; padding: 5px; background: #333; color: #fff; border: 1px solid #fff; cursor: pointer; }
         #region-info { position: fixed; bottom: 10px; right: 10px; color: #0ff; font-family: monospace; background: rgba(0,0,0,0.8); padding: 10px; }
         .region-overlay { position: absolute; border: 2px solid #ff0; background: rgba(255,255,0,0.2); pointer-events: none; }
     </style>
@@ -28,6 +29,16 @@
     <div id="controls">
         <button id="select-region">Select OCR Region</button>
         <button id="reset-region">Reset Region</button>
+        <select id="lang-select">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="es">Español</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="ru">Русский</option>
+        </select>
         <span id="mode-info"></span>
     </div>
     <div id="region-info">Region: Full Screen</div>
@@ -48,6 +59,31 @@ const regionInfo = document.getElementById('region-info');
 const modeInfo = document.getElementById('mode-info');
 const selectBtn = document.getElementById('select-region');
 const resetBtn = document.getElementById('reset-region');
+const langSelect = document.getElementById('lang-select');
+
+// Language configuration
+const LANG_NAMES = {
+    zh: '中文', en: 'English', ja: '日本語', ko: '한국어',
+    es: 'Español', fr: 'Français', de: 'Deutsch', ru: 'Русский'
+};
+let currentLang = 'zh';  // Default language
+
+function saveLangConfig() {
+    localStorage.setItem('translationLang', currentLang);
+}
+
+function loadLangConfig() {
+    const saved = localStorage.getItem('translationLang');
+    if (saved && LANG_NAMES[saved]) {
+        currentLang = saved;
+        langSelect.value = saved;
+    }
+}
+
+langSelect.addEventListener('change', () => {
+    currentLang = langSelect.value;
+    saveLangConfig();
+});
 
 // OCR history for translation context (last 3 results: original + translation)
 const ocrHistory = [];
@@ -56,17 +92,19 @@ let lastOcrText = '';
 let isTranslating = false;
 
 // Translation via Ollama (streaming)
-async function translateToChinese(newText) {
+async function translateToLanguage(newText) {
     if (isTranslating) return;
     isTranslating = true;
     translationText.textContent = '';  // Clear for streaming
+
+    const targetLang = LANG_NAMES[currentLang];
 
     // Build context from history (original + translation pairs)
     const contextLines = ocrHistory.map(item =>
         `原文：${item.original}\n翻译：${item.translation}`
     ).join('\n\n');
 
-    const prompt = `将以下原文翻译为中文。上下文仅供参考，不要翻译上下文。
+    const prompt = `将以下游戏文本翻译为${targetLang}。上下文仅供参考，不要翻译上下文。
 
 上下文（仅供参考）：
 ${contextLines}
@@ -500,7 +538,7 @@ function updateFrame() {
                             ocrText.textContent = data.text;
 
                             // Trigger translation (history is updated after translation completes)
-                            translateToChinese(data.text);
+                            translateToLanguage(data.text);
                         }
                     })
                     .catch(() => {});
@@ -514,6 +552,7 @@ function updateFrame() {
 let frameCount = 0;
 loadSavedRegion();  // Restore saved OCR region
 loadTranslationPos();  // Restore saved translation box position
+loadLangConfig();  // Restore saved language config
 updateFrame();
     </script>
 </body>
