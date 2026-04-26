@@ -40,3 +40,6 @@ Thumbs.db
 .classpath
 .project
 .settings/
+models/
+paddle_inference/
+paddle_inference.tgz
