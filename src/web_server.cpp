@@ -4,144 +4,49 @@
 #include <iostream>
 #include <cstring>
 #include <sstream>
+#include <fstream>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <signal.h>
 
-// HTML 页面模板（包含 JavaScript 远程控制代码）
-static const char* HTML_PAGE = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>DOSBox-X Remote Control</title>
-    <style>
-        body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        canvas { border: 2px solid #333; }
-        #info { position: fixed; top: 10px; left: 10px; color: #fff; font-family: monospace; }
-        #ocr { position: fixed; top: 10px; right: 10px; color: #0f0; font-family: monospace; background: rgba(0,0,0,0.7); padding: 10px; }
-    </style>
-</head>
-<body>
-    <div id="info">FPS: <span id="fps">0</span></div>
-    <div id="ocr">OCR: <span id="ocr-text">-</span></div>
-    <canvas id="screen"></canvas>
-    <script>
-const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d');
-const fpsSpan = document.getElementById('fps');
-const ocrText = document.getElementById('ocr-text');
-
-// 键盘状态
-const keyStates = new Uint32Array(8);
-const keyMap = {
-    'Escape': 0x01, '1': 0x02, '2': 0x03, '3': 0x04, '4': 0x05,
-    '5': 0x06, '6': 0x07, '7': 0x08, '8': 0x09, '9': 0x0A, '0': 0x0B,
-    'Minus': 0x0C, 'Equal': 0x0D, 'Backspace': 0x0E, 'Tab': 0x0F,
-    'q': 0x10, 'w': 0x11, 'e': 0x12, 'r': 0x13, 't': 0x14,
-    'y': 0x15, 'u': 0x16, 'i': 0x17, 'o': 0x18, 'p': 0x19,
-    'BracketLeft': 0x1A, 'BracketRight': 0x1B, 'Enter': 0x1C,
-    'ControlLeft': 0x1D, 'a': 0x1E, 's': 0x1F, 'd': 0x20, 'f': 0x21,
-    'g': 0x22, 'h': 0x23, 'j': 0x24, 'k': 0x25, 'l': 0x26,
-    'Semicolon': 0x27, 'Quote': 0x28, 'Backquote': 0x29,
-    'ShiftLeft': 0x2A, 'Backslash': 0x2B, 'z': 0x2C, 'x': 0x2D,
-    'c': 0x2E, 'v': 0x2F, 'b': 0x30, 'n': 0x31, 'm': 0x32,
-    'Comma': 0x33, 'Period': 0x34, 'Slash': 0x35, 'ShiftRight': 0x36,
-    'AltLeft': 0x38, 'Space': 0x39, 'CapsLock': 0x3A,
-    'F1': 0x3B, 'F2': 0x3C, 'F3': 0x3D, 'F4': 0x3E, 'F5': 0x3F,
-    'F6': 0x40, 'F7': 0x41, 'F8': 0x42, 'F9': 0x43, 'F10': 0x44,
-    'ArrowUp': 0x48, 'ArrowLeft': 0x4B, 'ArrowRight': 0x4D, 'ArrowDown': 0x50,
-    'Insert': 0x52, 'Delete': 0x53,
-};
-
-function setKey(scancode, pressed) {
-    const index = scancode >> 5;
-    const bit = scancode & 0x1F;
-    if (pressed) {
-        keyStates[index] |= (1 << bit);
-    } else {
-        keyStates[index] &= ~(1 << bit);
+// 加载 HTML 文件内容
+static std::string LoadHTMLFile(const std::string& filepath) {
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        std::cerr << "Warning: Failed to load HTML file: " << filepath << std::endl;
+        return "<html><body><h1>HTML file not found</h1><p>Please check resources/web_remote.html</p></body></html>";
     }
-    sendInput();
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
 }
 
-function sendInput() {
-    fetch('/input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys: Array.from(keyStates) })
-    });
+// 简单 JSON 解析：提取数字值
+static int ParseJsonInt(const std::string& json, const std::string& key) {
+    size_t key_pos = json.find("\"" + key + "\"");
+    if (key_pos == std::string::npos) return -1;
+
+    size_t colon_pos = json.find(':', key_pos);
+    if (colon_pos == std::string::npos) return -1;
+
+    // 跳过空白
+    size_t num_start = colon_pos + 1;
+    while (num_start < json.size() && (json[num_start] == ' ' || json[num_start] == '\t')) {
+        num_start++;
+    }
+
+    // 解析数字
+    if (num_start < json.size() && (json[num_start] >= '0' && json[num_start] <= '9')) {
+        return std::stoi(json.substr(num_start));
+    }
+
+    return -1;
 }
-
-document.addEventListener('keydown', (e) => {
-    e.preventDefault();
-    const scancode = keyMap[e.key] || keyMap[e.key.toLowerCase()];
-    if (scancode) setKey(scancode, true);
-});
-
-document.addEventListener('keyup', (e) => {
-    e.preventDefault();
-    const scancode = keyMap[e.key] || keyMap[e.key.toLowerCase()];
-    if (scancode) setKey(scancode, false);
-});
-
-let lastTime = 0;
-let frameCount = 0;
-
-function updateFrame() {
-    fetch('/frame')
-        .then(r => r.arrayBuffer())
-        .then(data => {
-            const view = new DataView(data);
-            const width = view.getUint16(0, true);
-            const height = view.getUint16(2, true);
-            const frameData = new Uint8Array(data, 4);
-
-            canvas.width = width;
-            canvas.height = height;
-
-            const imageData = ctx.createImageData(width, height);
-            // ARGB -> RGBA
-            for (let i = 0; i < width * height; i++) {
-                const offset = i * 4;
-                imageData.data[offset + 0] = frameData[offset + 2]; // R
-                imageData.data[offset + 1] = frameData[offset + 1]; // G
-                imageData.data[offset + 2] = frameData[offset + 0]; // B
-                imageData.data[offset + 3] = frameData[offset + 3]; // A
-            }
-            ctx.putImageData(imageData, 0, 0);
-
-            // FPS 计算
-            frameCount++;
-            const now = performance.now();
-            if (now - lastTime >= 1000) {
-                fpsSpan.textContent = frameCount;
-                frameCount = 0;
-                lastTime = now;
-            }
-        })
-        .catch(err => console.error('Frame error:', err));
-
-    // OCR 结果
-    fetch('/ocr')
-        .then(r => r.json())
-        .then(data => {
-            if (data.text) {
-                ocrText.textContent = data.text;
-            }
-        })
-        .catch(() => {});
-
-    requestAnimationFrame(updateFrame);
-}
-
-updateFrame();
-    </script>
-</body>
-</html>
-)";
 
 WebRemoteServer::WebRemoteServer()
     : m_running(false)
@@ -154,10 +59,19 @@ WebRemoteServer::~WebRemoteServer() {
     Stop();
 }
 
-bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback input_callback) {
+bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback input_callback,
+                              OCRGetter ocr_getter, OCRRegionSetter ocr_region_setter) {
+    // 忽略 SIGPIPE 信号（防止客户端断开时崩溃）
+    signal(SIGPIPE, SIG_IGN);
+
     m_port = port;
     m_frameGetter = frame_getter;
     m_inputCallback = input_callback;
+    m_ocrGetter = ocr_getter;
+    m_ocrRegionSetter = ocr_region_setter;
+
+    // 加载 HTML 文件
+    m_htmlContent = LoadHTMLFile("resources/web_remote.html");
 
     // 创建 socket
     m_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -221,19 +135,33 @@ std::string WebRemoteServer::GetURL() const {
 
 void WebRemoteServer::ServerLoop() {
     while (m_running) {
-        // 接受新连接
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_socket = accept(m_socket, (struct sockaddr*)&client_addr, &client_len);
+        // 使用 select 检查是否有连接请求，避免 CPU 占用过高
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 50000;  // 50ms timeout
 
-        if (client_socket >= 0) {
-            // 处理请求
-            HandleRequest(client_socket);
-            close(client_socket);
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(m_socket, &read_fds);
+
+        int ready = select(m_socket + 1, &read_fds, nullptr, nullptr, &tv);
+
+        if (ready > 0 && FD_ISSET(m_socket, &read_fds)) {
+            // 接受新连接
+            struct sockaddr_in client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            int client_socket = accept(m_socket, (struct sockaddr*)&client_addr, &client_len);
+
+            if (client_socket >= 0) {
+                // 设置客户端 socket 为阻塞模式（确保 recv 能正常工作）
+                int client_flags = fcntl(client_socket, F_GETFL, 0);
+                fcntl(client_socket, F_SETFL, client_flags & ~O_NONBLOCK);
+
+                // 处理请求
+                HandleRequest(client_socket);
+                close(client_socket);
+            }
         }
-
-        // 短暂休眠避免占用 CPU
-        usleep(10000);  // 10ms
     }
 }
 
@@ -266,9 +194,10 @@ void WebRemoteServer::HandleRequest(int client_socket) {
     std::string content_type = "text/html";
 
     if (path == "/" || path == "/index.html") {
-        // 返回 HTML 页面
+        // 返回 HTML 页面（每次重新加载，确保获取最新版本）
+        std::string htmlContent = LoadHTMLFile("resources/web_remote.html");
         response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n";
-        response += HTML_PAGE;
+        response += htmlContent;
 
     } else if (path == "/frame") {
         // 返回帧数据
@@ -301,7 +230,6 @@ void WebRemoteServer::HandleRequest(int client_socket) {
 
     } else if (path == "/input" && method == "POST") {
         // 处理输入
-        // 找到 JSON body
         size_t body_start = request.find("\r\n\r\n");
         if (body_start != std::string::npos) {
             std::string body = request.substr(body_start + 4);
@@ -309,7 +237,6 @@ void WebRemoteServer::HandleRequest(int client_socket) {
             // 解析 JSON (简单解析)
             uint32_t key_states[8] = {0};
 
-            // 查找 keys 数组
             size_t keys_pos = body.find("\"keys\"");
             if (keys_pos != std::string::npos) {
                 size_t array_start = body.find('[', keys_pos);
@@ -318,11 +245,9 @@ void WebRemoteServer::HandleRequest(int client_socket) {
                 if (array_start != std::string::npos && array_end != std::string::npos) {
                     std::string array_content = body.substr(array_start + 1, array_end - array_start - 1);
 
-                    // 解析数字
                     size_t pos = 0;
                     int index = 0;
                     while (pos < array_content.size() && index < 8) {
-                        // 找到数字
                         while (pos < array_content.size() && (array_content[pos] == ' ' || array_content[pos] == ',' || array_content[pos] == '\n')) {
                             pos++;
                         }
@@ -330,7 +255,6 @@ void WebRemoteServer::HandleRequest(int client_socket) {
                         if (pos < array_content.size() && (array_content[pos] >= '0' && array_content[pos] <= '9')) {
                             key_states[index] = std::stoul(array_content.substr(pos));
                             index++;
-                            // 跳过数字
                             while (pos < array_content.size() && array_content[pos] >= '0' && array_content[pos] <= '9') {
                                 pos++;
                             }
@@ -341,7 +265,6 @@ void WebRemoteServer::HandleRequest(int client_socket) {
                 }
             }
 
-            // 调用输入回调
             if (m_inputCallback) {
                 m_inputCallback(key_states, 0, 0, 0);
             }
@@ -349,9 +272,50 @@ void WebRemoteServer::HandleRequest(int client_socket) {
 
         response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}";
 
+    } else if (path == "/region" && method == "POST") {
+        // 处理 OCR 区域设置
+        size_t body_start = request.find("\r\n\r\n");
+        if (body_start != std::string::npos) {
+            std::string body = request.substr(body_start + 4);
+
+            // 解析区域参数
+            int x = ParseJsonInt(body, "x");
+            int y = ParseJsonInt(body, "y");
+            int w = ParseJsonInt(body, "width");
+            int h = ParseJsonInt(body, "height");
+
+            bool valid = (x >= 0 && y >= 0 && w > 0 && h > 0);
+
+            if (m_ocrRegionSetter) {
+                m_ocrRegionSetter(x, y, w, h, valid);
+            }
+
+            if (valid) {
+                std::cout << "[Region] OCR region set: (" << x << "," << y << ") " << w << "x" << h << std::endl;
+            } else {
+                std::cout << "[Region] OCR region cleared (full screen)" << std::endl;
+            }
+        }
+
+        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}";
+
     } else if (path == "/ocr") {
-        // 返回 OCR 结果（简单返回）
-        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"text\":\"\"}";
+        // 返回 OCR 结果
+        std::string ocr_text = "";
+        if (m_ocrGetter) {
+            ocr_text = m_ocrGetter();
+        }
+
+        // JSON 编码文本
+        std::string json_text = "";
+        for (char c : ocr_text) {
+            if (c == '"') json_text += "\\\"";
+            else if (c == '\\') json_text += "\\\\";
+            else if (c == '\n') json_text += "\\n";
+            else if (c == '\r') json_text += "";
+            else json_text += c;
+        }
+        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"text\":\"" + json_text + "\"}";
 
     } else {
         response = "HTTP/1.1 404 Not Found\r\n\r\nNot found";

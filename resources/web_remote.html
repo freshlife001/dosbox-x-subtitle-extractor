@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>DOSBox-X Remote Control</title>
+    <style>
+        body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #screen-container { position: relative; }
+        canvas { border: 2px solid #333; display: block; }
+        #info { position: fixed; top: 10px; left: 10px; color: #fff; font-family: monospace; }
+        #ocr { position: fixed; bottom: 60px; right: 10px; color: #0f0; font-family: monospace; background: rgba(0,0,0,0.8); padding: 10px; font-size: 16px; max-width: 500px; z-index: 100; white-space: pre-wrap; }
+        #translation { position: fixed; color: #ff0; font-family: monospace; background: rgba(0,0,0,0.85); padding: 10px; font-size: 18px; z-index: 100; white-space: pre-wrap; border: 1px solid #ff0; cursor: move; user-select: none; display: flex; flex-direction: column; }
+        #translation-text { cursor: text; user-select: text; flex: 1; overflow: auto; min-height: 0; }
+        #translation-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #f80 50%); }
+        #controls { position: fixed; bottom: 10px; left: 10px; color: #fff; font-family: monospace; }
+        #controls button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+        #region-info { position: fixed; bottom: 10px; right: 10px; color: #0ff; font-family: monospace; background: rgba(0,0,0,0.8); padding: 10px; }
+        .region-overlay { position: absolute; border: 2px solid #ff0; background: rgba(255,255,0,0.2); pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="info">FPS: <span id="fps">0</span></div>
+    <div id="ocr">OCR: <span id="ocr-text">-</span></div>
+    <div id="translation">
+        <div id="translation-text">-</div>
+        <div id="translation-resize"></div>
+    </div>
+    <div id="controls">
+        <button id="select-region">Select OCR Region</button>
+        <button id="reset-region">Reset Region</button>
+        <span id="mode-info"></span>
+    </div>
+    <div id="region-info">Region: Full Screen</div>
+    <div id="screen-container">
+        <canvas id="screen"></canvas>
+        <div id="region-overlay" class="region-overlay" style="display:none;"></div>
+    </div>
+
+    <script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const fpsSpan = document.getElementById('fps');
+const ocrText = document.getElementById('ocr-text');
+const translationText = document.getElementById('translation-text');
+const screenContainer = document.getElementById('screen-container');
+const regionOverlay = document.getElementById('region-overlay');
+const regionInfo = document.getElementById('region-info');
+const modeInfo = document.getElementById('mode-info');
+const selectBtn = document.getElementById('select-region');
+const resetBtn = document.getElementById('reset-region');
+
+// OCR history for translation context (last 3 results: original + translation)
+const ocrHistory = [];
+const MAX_OCR_HISTORY = 3;
+let lastOcrText = '';
+let isTranslating = false;
+
+// Translation via Ollama (streaming)
+async function translateToChinese(newText) {
+    if (isTranslating) return;
+    isTranslating = true;
+    translationText.textContent = '';  // Clear for streaming
+
+    // Build context from history (original + translation pairs)
+    const contextLines = ocrHistory.map(item =>
+        `原文：${item.original}\n翻译：${item.translation}`
+    ).join('\n\n');
+
+    const prompt = `将以下原文翻译为中文。上下文仅供参考，不要翻译上下文。
+
+上下文（仅供参考）：
+${contextLines}
+
+原文（需要翻译）：
+${newText}
+
+要求：
+1. 只翻译原文，不要翻译上下文
+2. 只输出翻译结果，不要解释
+3. 保持游戏术语的一致性
+4. 结合上下文理解语义
+5. 游戏数值(如HP、MP、等级等)保留数值部分
+
+翻译：`;
+
+    let fullTranslation = '';
+
+    try {
+        const response = await fetch('http://localhost:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'gemma4:26b',
+                prompt: prompt,
+                think: false,
+                stream: true  // Enable streaming
+            })
+        });
+
+        if (!response.ok) {
+            translationText.textContent = '翻译服务连接失败';
+            isTranslating = false;
+            return;
+        }
+
+        // Read stream line by line
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';  // Keep incomplete line
+
+            for (const line of lines) {
+                if (line.trim()) {
+                    try {
+                        const json = JSON.parse(line);
+                        if (json.response) {
+                            fullTranslation += json.response;
+                            translationText.textContent += json.response;
+                        }
+                    } catch (e) {
+                        // Skip malformed JSON
+                    }
+                }
+            }
+        }
+
+        // Add to history after translation completes
+        if (fullTranslation.trim()) {
+            // Check if original already exists in history
+            const exists = ocrHistory.some(item => item.original === newText);
+            if (!exists) {
+                ocrHistory.push({
+                    original: newText,
+                    translation: fullTranslation.trim()
+                });
+                if (ocrHistory.length > MAX_OCR_HISTORY) {
+                    ocrHistory.shift();
+                }
+            }
+        }
+    } catch (err) {
+        translationText.textContent = '翻译请求错误: ' + err.message;
+    }
+
+    isTranslating = false;
+}
+
+// OCR Region
+let ocrRegion = null;  // {x, y, width, height} relative to canvas
+let selectMode = false;
+let dragStart = null;
+let dragEnd = null;
+
+// Translation Box drag & resize
+const translationBox = document.getElementById('translation');
+const translationResize = document.getElementById('translation-resize');
+let transDragging = false;
+let transResizing = false;
+let transDragStart = { x: 0, y: 0 };
+let transBoxStart = { x: 0, y: 0, width: 0, height: 0 };
+
+// Default position for translation box
+const DEFAULT_TRANS_POS = { left: '10px', bottom: '60px', width: '500px' };
+
+function saveTranslationPos() {
+    const rect = translationBox.getBoundingClientRect();
+    localStorage.setItem('translationPos', JSON.stringify({
+        left: translationBox.style.left,
+        top: translationBox.style.top,
+        bottom: translationBox.style.bottom,
+        width: translationBox.style.width,
+        height: translationBox.style.height
+    }));
+}
+
+function loadTranslationPos() {
+    const saved = localStorage.getItem('translationPos');
+    if (saved) {
+        try {
+            const pos = JSON.parse(saved);
+            if (pos.left) translationBox.style.left = pos.left;
+            if (pos.top) translationBox.style.top = pos.top;
+            if (pos.bottom) translationBox.style.bottom = pos.bottom || '';
+            if (pos.width) translationBox.style.width = pos.width;
+            if (pos.height) translationBox.style.height = pos.height || '';
+        } catch (e) {
+            localStorage.removeItem('translationPos');
+        }
+    }
+    if (!translationBox.style.left && !translationBox.style.top) {
+        translationBox.style.left = DEFAULT_TRANS_POS.left;
+        translationBox.style.bottom = DEFAULT_TRANS_POS.bottom;
+        translationBox.style.width = DEFAULT_TRANS_POS.width;
+    }
+}
+
+// Drag translation box
+translationBox.addEventListener('mousedown', (e) => {
+    if (e.target === translationResize) return;  // Handle resize separately
+    transDragging = true;
+    transDragStart = { x: e.clientX, y: e.clientY };
+    const rect = translationBox.getBoundingClientRect();
+    transBoxStart = { x: rect.left, y: rect.top };
+    translationBox.style.bottom = '';  // Clear bottom to use top positioning
+    e.preventDefault();
+});
+
+// Resize translation box
+translationResize.addEventListener('mousedown', (e) => {
+    transResizing = true;
+    transDragStart = { x: e.clientX, y: e.clientY };
+    const rect = translationBox.getBoundingClientRect();
+    transBoxStart = { width: rect.width, height: rect.height };
+    e.preventDefault();
+    e.stopPropagation();
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (transDragging) {
+        const dx = e.clientX - transDragStart.x;
+        const dy = e.clientY - transDragStart.y;
+        translationBox.style.left = (transBoxStart.x + dx) + 'px';
+        translationBox.style.top = (transBoxStart.y + dy) + 'px';
+    }
+    if (transResizing) {
+        const dx = e.clientX - transDragStart.x;
+        const dy = e.clientY - transDragStart.y;
+        const newWidth = Math.max(200, transBoxStart.width + dx);
+        const newHeight = Math.max(50, transBoxStart.height + dy);
+        translationBox.style.width = newWidth + 'px';
+        translationBox.style.height = newHeight + 'px';
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    if (transDragging || transResizing) {
+        saveTranslationPos();
+    }
+    transDragging = false;
+    transResizing = false;
+});
+
+// 键盘状态
+const keyStates = new Uint32Array(8);
+const keyMap = {
+    'Escape': 0x01, '1': 0x02, '2': 0x03, '3': 0x04, '4': 0x05,
+    '5': 0x06, '6': 0x07, '7': 0x08, '8': 0x09, '9': 0x0A, '0': 0x0B,
+    'Minus': 0x0C, 'Equal': 0x0D, 'Backspace': 0x0E, 'Tab': 0x0F,
+    'q': 0x10, 'w': 0x11, 'e': 0x12, 'r': 0x13, 't': 0x14,
+    'y': 0x15, 'u': 0x16, 'i': 0x17, 'o': 0x18, 'p': 0x19,
+    'BracketLeft': 0x1A, 'BracketRight': 0x1B, 'Enter': 0x1C,
+    'ControlLeft': 0x1D, 'a': 0x1E, 's': 0x1F, 'd': 0x20, 'f': 0x21,
+    'g': 0x22, 'h': 0x23, 'j': 0x24, 'k': 0x25, 'l': 0x26,
+    'Semicolon': 0x27, 'Quote': 0x28, 'Backquote': 0x29,
+    'ShiftLeft': 0x2A, 'Backslash': 0x2B, 'z': 0x2C, 'x': 0x2D,
+    'c': 0x2E, 'v': 0x2F, 'b': 0x30, 'n': 0x31, 'm': 0x32,
+    'Comma': 0x33, 'Period': 0x34, 'Slash': 0x35, 'ShiftRight': 0x36,
+    'AltLeft': 0x38, 'Space': 0x39, 'CapsLock': 0x3A,
+    'F1': 0x3B, 'F2': 0x3C, 'F3': 0x3D, 'F4': 0x3E, 'F5': 0x3F,
+    'F6': 0x40, 'F7': 0x41, 'F8': 0x42, 'F9': 0x43, 'F10': 0x44,
+    'ArrowUp': 0x48, 'ArrowLeft': 0x4B, 'ArrowRight': 0x4D, 'ArrowDown': 0x50,
+    'Insert': 0x52, 'Delete': 0x53,
+};
+
+function setKey(scancode, pressed) {
+    const index = scancode >> 5;
+    const bit = scancode & 0x1F;
+    if (pressed) {
+        keyStates[index] |= (1 << bit);
+    } else {
+        keyStates[index] &= ~(1 << bit);
+    }
+    sendInput();
+}
+
+function sendInput() {
+    fetch('/input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: Array.from(keyStates) })
+    });
+}
+
+function sendRegion(region) {
+    fetch('/region', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(region || {})
+    });
+
+    // Save to localStorage
+    if (region) {
+        localStorage.setItem('ocrRegion', JSON.stringify(region));
+    } else {
+        localStorage.removeItem('ocrRegion');
+    }
+}
+
+function loadSavedRegion() {
+    const saved = localStorage.getItem('ocrRegion');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            // Validate saved region has required fields
+            if (parsed.x !== undefined && parsed.y !== undefined &&
+                parsed.width !== undefined && parsed.height !== undefined) {
+                ocrRegion = parsed;
+                regionInfo.textContent = `Region: (${ocrRegion.x},${ocrRegion.y}) ${ocrRegion.width}x${ocrRegion.height}`;
+                // Send to backend immediately
+                sendRegion(ocrRegion);
+            } else {
+                localStorage.removeItem('ocrRegion');
+            }
+        } catch (e) {
+            localStorage.removeItem('ocrRegion');
+        }
+    }
+}
+
+// Region selection
+selectBtn.addEventListener('click', () => {
+    selectMode = true;
+    modeInfo.textContent = '[SELECTING - Drag on screen]';
+    selectBtn.disabled = true;
+});
+
+resetBtn.addEventListener('click', () => {
+    ocrRegion = null;
+    selectMode = false;
+    dragStart = null;
+    dragEnd = null;
+    regionOverlay.style.display = 'none';
+    regionInfo.textContent = 'Region: Full Screen';
+    modeInfo.textContent = '';
+    selectBtn.disabled = false;
+    sendRegion(null);  // This also clears localStorage
+});
+
+// Mouse events for region selection
+canvas.addEventListener('mousedown', (e) => {
+    if (selectMode) {
+        const rect = canvas.getBoundingClientRect();
+        dragStart = {
+            x: Math.floor((e.clientX - rect.left) * (canvas.width / rect.width)),
+            y: Math.floor((e.clientY - rect.top) * (canvas.height / rect.height))
+        };
+        e.preventDefault();
+    }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (selectMode && dragStart) {
+        const rect = canvas.getBoundingClientRect();
+        dragEnd = {
+            x: Math.floor((e.clientX - rect.left) * (canvas.width / rect.width)),
+            y: Math.floor((e.clientY - rect.top) * (canvas.height / rect.height))
+        };
+        updateRegionOverlay();
+        e.preventDefault();
+    }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (selectMode && dragStart) {
+        const rect = canvas.getBoundingClientRect();
+        dragEnd = {
+            x: Math.floor((e.clientX - rect.left) * (canvas.width / rect.width)),
+            y: Math.floor((e.clientY - rect.top) * (canvas.height / rect.height))
+        };
+
+        // Calculate region (normalize to positive width/height)
+        const x1 = Math.min(dragStart.x, dragEnd.x);
+        const y1 = Math.min(dragStart.y, dragEnd.y);
+        const x2 = Math.max(dragStart.x, dragEnd.x);
+        const y2 = Math.max(dragStart.y, dragEnd.y);
+
+        if (x2 - x1 > 10 && y2 - y1 > 10) {  // Minimum size
+            ocrRegion = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+            regionInfo.textContent = `Region: (${x1},${y1}) ${x2-x1}x${y2-y1}`;
+            sendRegion(ocrRegion);
+        }
+
+        selectMode = false;
+        dragStart = null;
+        dragEnd = null;
+        modeInfo.textContent = '';
+        selectBtn.disabled = false;
+        e.preventDefault();
+    }
+});
+
+function updateRegionOverlay() {
+    if (dragStart && dragEnd) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = rect.width / canvas.width;
+        const scaleY = rect.height / canvas.height;
+
+        const x1 = Math.min(dragStart.x, dragEnd.x);
+        const y1 = Math.min(dragStart.y, dragEnd.y);
+        const w = Math.abs(dragEnd.x - dragStart.x);
+        const h = Math.abs(dragEnd.y - dragStart.y);
+
+        regionOverlay.style.display = 'block';
+        regionOverlay.style.left = (x1 * scaleX) + 'px';
+        regionOverlay.style.top = (y1 * scaleY) + 'px';
+        regionOverlay.style.width = (w * scaleX) + 'px';
+        regionOverlay.style.height = (h * scaleY) + 'px';
+    }
+}
+
+// Show existing region overlay when canvas size changes
+function showRegionOverlay() {
+    if (ocrRegion) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = rect.width / canvas.width;
+        const scaleY = rect.height / canvas.height;
+
+        regionOverlay.style.display = 'block';
+        regionOverlay.style.left = (ocrRegion.x * scaleX) + 'px';
+        regionOverlay.style.top = (ocrRegion.y * scaleY) + 'px';
+        regionOverlay.style.width = (ocrRegion.width * scaleX) + 'px';
+        regionOverlay.style.height = (ocrRegion.height * scaleY) + 'px';
+    } else {
+        regionOverlay.style.display = 'none';
+    }
+}
+
+// Keyboard input (only when not selecting region)
+document.addEventListener('keydown', (e) => {
+    if (selectMode) return;
+    e.preventDefault();
+    const scancode = keyMap[e.key] || keyMap[e.key.toLowerCase()];
+    if (scancode) setKey(scancode, true);
+});
+
+document.addEventListener('keyup', (e) => {
+    if (selectMode) return;
+    e.preventDefault();
+    const scancode = keyMap[e.key] || keyMap[e.key.toLowerCase()];
+    if (scancode) setKey(scancode, false);
+});
+
+let lastFrameTime = 0;
+const frameInterval = 1000 / 30;  // 30 FPS
+let lastTime = 0;
+
+function updateFrame() {
+    const now = performance.now();
+    if (now - lastFrameTime < frameInterval) {
+        requestAnimationFrame(updateFrame);
+        return;
+    }
+    lastFrameTime = now;
+
+    fetch('/frame')
+        .then(r => r.arrayBuffer())
+        .then(data => {
+            const view = new DataView(data);
+            const width = view.getUint16(0, true);
+            const height = view.getUint16(2, true);
+            const frameData = new Uint8Array(data, 4);
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const imageData = ctx.createImageData(width, height);
+            // ARGB -> RGBA
+            for (let i = 0; i < width * height; i++) {
+                const offset = i * 4;
+                imageData.data[offset + 0] = frameData[offset + 2]; // R
+                imageData.data[offset + 1] = frameData[offset + 1]; // G
+                imageData.data[offset + 2] = frameData[offset + 0]; // B
+                imageData.data[offset + 3] = frameData[offset + 3]; // A
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            // Show region overlay
+            showRegionOverlay();
+
+            // FPS 计算
+            frameCount++;
+            if (now - lastTime >= 1000) {
+                fpsSpan.textContent = frameCount;
+                frameCount = 0;
+                lastTime = now;
+
+                // OCR 结果（每秒更新一次）
+                fetch('/ocr')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.text && data.text !== lastOcrText) {
+                            lastOcrText = data.text;
+                            ocrText.textContent = data.text;
+
+                            // Trigger translation (history is updated after translation completes)
+                            translateToChinese(data.text);
+                        }
+                    })
+                    .catch(() => {});
+            }
+        })
+        .catch(err => console.error('Frame error:', err));
+
+    requestAnimationFrame(updateFrame);
+}
+
+let frameCount = 0;
+loadSavedRegion();  // Restore saved OCR region
+loadTranslationPos();  // Restore saved translation box position
+updateFrame();
+    </script>
+</body>
+</html>

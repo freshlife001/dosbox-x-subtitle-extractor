@@ -194,6 +194,15 @@ int RunWebRemoteMode(const Options& options) {
         return gameLink.GetFrameBufferData(width, height);
     };
 
+    // OCR 结果存储（供 web 服务器使用）
+    static std::string s_latest_ocr_text;
+
+    // OCR 区域存储（供 web 服务器和 OCR 循环使用）
+    static struct OCRRegion {
+        int x = -1, y = -1, width = -1, height = -1;
+        bool valid = false;
+    } s_ocr_region;
+
     // 输入处理回调
     auto inputCallback = [](const uint32_t* key_states, float mouse_dx, float mouse_dy, uint8_t mouse_btn) {
         if (g_gameLink) {
@@ -201,8 +210,22 @@ int RunWebRemoteMode(const Options& options) {
         }
     };
 
+    // OCR 结果获取回调
+    auto ocrGetter = []() -> std::string {
+        return s_latest_ocr_text;
+    };
+
+    // OCR 区域设置回调
+    auto ocrRegionSetter = [](int x, int y, int w, int h, bool valid) {
+        s_ocr_region.x = x;
+        s_ocr_region.y = y;
+        s_ocr_region.width = w;
+        s_ocr_region.height = h;
+        s_ocr_region.valid = valid;
+    };
+
     // 启动 Web 服务器
-    if (!webServer.Start(options.web_port, frameGetter, inputCallback)) {
+    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter)) {
         std::cerr << "Error: Failed to start web server" << std::endl;
         gameLink.Shutdown();
         return 1;
@@ -222,7 +245,37 @@ int RunWebRemoteMode(const Options& options) {
         auto frame_data = gameLink.GetFrameBufferData(width, height);
 
         if (!frame_data.empty() && options.ocr_continuous) {
-            auto ocr_results = PerformOCROnBGRA(frame_data, width, height);
+            // 如果设置了 OCR 区域，裁剪帧数据
+            std::vector<uint8_t> ocr_data;
+            int ocr_width = width;
+            int ocr_height = height;
+
+            if (s_ocr_region.valid) {
+                // 裁剪 BGRA 帧数据到指定区域
+                int crop_x = std::max(0, std::min(s_ocr_region.x, (int)width - 1));
+                int crop_y = std::max(0, std::min(s_ocr_region.y, (int)height - 1));
+                int crop_w = std::min(s_ocr_region.width, (int)width - crop_x);
+                int crop_h = std::min(s_ocr_region.height, (int)height - crop_y);
+
+                if (crop_w > 0 && crop_h > 0) {
+                    ocr_data.resize(crop_w * crop_h * 4);
+                    for (int y = 0; y < crop_h; ++y) {
+                        for (int x = 0; x < crop_w; ++x) {
+                            size_t src_offset = ((crop_y + y) * width + (crop_x + x)) * 4;
+                            size_t dst_offset = (y * crop_w + x) * 4;
+                            for (int b = 0; b < 4; ++b) {
+                                ocr_data[dst_offset + b] = frame_data[src_offset + b];
+                            }
+                        }
+                    }
+                    ocr_width = crop_w;
+                    ocr_height = crop_h;
+                }
+            } else {
+                ocr_data = frame_data;  // 使用完整帧
+            }
+
+            auto ocr_results = PerformOCROnBGRA(ocr_data, ocr_width, ocr_height);
 
             std::string current_text;
             for (const auto& result : ocr_results) {
@@ -235,6 +288,7 @@ int RunWebRemoteMode(const Options& options) {
             if (!current_text.empty() && current_text != last_ocr_text) {
                 std::cout << "[OCR] " << current_text << std::endl;
                 last_ocr_text = current_text;
+                s_latest_ocr_text = current_text;  // 更新 web OCR 显示
 
                 if (!options.output_file.empty()) {
                     if (start_time == 0) {

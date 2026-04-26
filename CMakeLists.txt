@@ -17,6 +17,9 @@ set(SOURCES
 # 头文件目录
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+# 复制资源文件到构建目录
+file(COPY ${CMAKE_SOURCE_DIR}/resources DESTINATION ${CMAKE_BINARY_DIR})
+
 # 创建可执行文件
 add_executable(subtitle_extractor ${SOURCES})
 

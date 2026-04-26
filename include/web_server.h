@@ -27,6 +27,18 @@ public:
     /// @return 帧缓冲数据 (ARGB 格式) 和宽高
     using FrameGetter = std::function<std::vector<uint8_t>(uint16_t& width, uint16_t& height)>;
 
+    /// OCR 结果获取函数类型
+    /// @return OCR 识别的文本
+    using OCRGetter = std::function<std::string()>;
+
+    /// OCR 区域设置函数类型
+    /// @param x 区域左上角 x
+    /// @param y 区域左上角 y
+    /// @param width 区域宽度
+    /// @param height 区域高度
+    /// @param valid 是否有效（false 表示清除区域）
+    using OCRRegionSetter = std::function<void(int x, int y, int width, int height, bool valid)>;
+
     WebRemoteServer();
     ~WebRemoteServer();
 
@@ -34,8 +46,11 @@ public:
     /// @param port 端口号 (默认 8080)
     /// @param frame_getter 获取帧数据的回调
     /// @param input_callback 处理输入的回调
+    /// @param ocr_getter 获取 OCR 结果的回调（可选）
+    /// @param ocr_region_setter 设置 OCR 区域的回调（可选）
     /// @return 成功返回 true
-    bool Start(int port, FrameGetter frame_getter, InputCallback input_callback);
+    bool Start(int port, FrameGetter frame_getter, InputCallback input_callback,
+               OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr);
 
     /// 停止服务器
     void Stop();
@@ -54,6 +69,10 @@ private:
 
     FrameGetter m_frameGetter;
     InputCallback m_inputCallback;
+    OCRGetter m_ocrGetter;
+    OCRRegionSetter m_ocrRegionSetter;
+
+    std::string m_htmlContent;  // 缓存 HTML 内容
 
     void ServerLoop();
     void HandleRequest(int client_socket);
