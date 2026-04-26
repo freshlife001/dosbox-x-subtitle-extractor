@@ -30,10 +30,10 @@ cmake .. && make -j4
 ### Run OCR Mode with Web Interface
 
 ```bash
-./subtitle_extractor --web --web-port 9090 --ocr-continuous
+./subtitle_extractor --web --web-port 9091 --ocr-continuous
 ```
 
-Then open `http://localhost:9090` in your browser.
+Then open `http://localhost:9091` in your browser.
 
 ## DOSBox-X Game Link Configuration
 
@@ -75,7 +75,7 @@ This enables Game Link protocol for:
 
 ```bash
 # Web remote control with OCR
-./subtitle_extractor --web --web-port 9090 --ocr-continuous
+./subtitle_extractor --web --web-port 9091 --ocr-continuous
 
 # Standalone OCR mode
 ./subtitle_extractor --ocr --ocr-continuous --ocr-interval 1000 --ocr-min-confidence 0.5
@@ -130,6 +130,55 @@ Experimental feature for searching text patterns in game memory:
    ollama pull gemma4:26b
    ```
 3. Ensure Ollama is running on `localhost:11434`
+
+## OCR Setup (Ollama)
+
+For better OCR accuracy with Chinese/Japanese text, use Ollama VLM OCR:
+
+### 1. Install Ollama
+
+```bash
+# macOS
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+Or download from: https://ollama.ai/download
+
+### 2. Install OCR Model
+
+```bash
+# Pull glm-ocr model (recommended for Chinese/Japanese)
+ollama pull glm-ocr:latest
+
+# Alternative models
+ollama pull llava:latest        # General VLM
+ollama pull minicpm-v:latest    # Lightweight VLM
+```
+
+### 3. Start Ollama Server
+
+```bash
+# Start Ollama (runs on localhost:11434 by default)
+ollama serve
+```
+
+### 4. Use Ollama OCR
+
+```bash
+# Web remote mode with Ollama OCR
+./subtitle_extractor --web --web-port 9091 --ocr-continuous --ocr-type ollama
+
+# Or select OCR type in web interface (Ollama/Vision dropdown)
+```
+
+### OCR Type Comparison
+
+| OCR Type | Speed | Accuracy (CJK) | Requirements |
+|----------|-------|----------------|--------------|
+| **Ollama** | ~300ms | Excellent | Ollama + glm-ocr model |
+| **Vision** | ~70ms | Poor (Chinese/Japanese) | macOS built-in |
+
+Vision OCR is fast but struggles with Chinese/Japanese text. Ollama OCR provides much better accuracy for CJK languages.
 
 ## Project Structure
 
