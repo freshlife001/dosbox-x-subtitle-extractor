@@ -375,6 +375,8 @@ void GameLinkInterface::ReleaseMutex() {
 
 void GameLinkInterface::SendInput(
     const uint32_t* key_states,
+    float mouse_x,
+    float mouse_y,
     float mouse_dx,
     float mouse_dy,
     uint8_t mouse_btn
@@ -388,6 +390,8 @@ void GameLinkInterface::SendInput(
     }
 
     // 设置 input 结构
+    m_pSharedMemory->input.mouse_x = mouse_x;
+    m_pSharedMemory->input.mouse_y = mouse_y;
     m_pSharedMemory->input.mouse_dx = mouse_dx;
     m_pSharedMemory->input.mouse_dy = mouse_dy;
     m_pSharedMemory->input.mouse_btn = mouse_btn;
@@ -400,7 +404,7 @@ void GameLinkInterface::SendInput(
 
     // 设置 WANT_KEYB 和 WANT_MOUSE 标志
     m_pSharedMemory->flags |= sSharedMemoryMap_R4::FLAG_WANT_KEYB;
-    if (mouse_btn != 0 || mouse_dx != 0 || mouse_dy != 0) {
+    if (mouse_btn != 0 || mouse_dx != 0 || mouse_dy != 0 || mouse_x != 0 || mouse_y != 0) {
         m_pSharedMemory->flags |= sSharedMemoryMap_R4::FLAG_WANT_MOUSE;
     }
 

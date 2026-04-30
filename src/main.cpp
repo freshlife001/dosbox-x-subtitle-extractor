@@ -207,9 +207,9 @@ int RunWebRemoteMode(const Options& options) {
     } s_ocr_region;
 
     // 输入处理回调
-    auto inputCallback = [](const uint32_t* key_states, float mouse_dx, float mouse_dy, uint8_t mouse_btn) {
+    auto inputCallback = [](const uint32_t* key_states, float mouse_x, float mouse_y, float mouse_dx, float mouse_dy, uint8_t mouse_btn) {
         if (g_gameLink) {
-            g_gameLink->SendInput(key_states, mouse_dx, mouse_dy, mouse_btn);
+            g_gameLink->SendInput(key_states, mouse_x, mouse_y, mouse_dx, mouse_dy, mouse_btn);
         }
     };
 
@@ -247,6 +247,37 @@ int RunWebRemoteMode(const Options& options) {
     std::string last_ocr_text;
     uint64_t start_time = 0;
     auto last_ocr_time = std::chrono::high_resolution_clock::now();
+
+    // 保存上一帧 OCR 数据用于变化检测
+    std::vector<uint8_t> last_ocr_data;
+    int last_ocr_width = 0;
+    int last_ocr_height = 0;
+    const float CHANGE_THRESHOLD = 0.01f;  // 10% 变化阈值
+
+    // 计算帧变化率的函数
+    auto CalculateFrameChange = [](const std::vector<uint8_t>& current, const std::vector<uint8_t>& last) -> float {
+        if (current.empty() || last.empty() || current.size() != last.size()) {
+            return 1.0f;  // 如果没有上一帧或大小不同，强制执行 OCR
+        }
+
+        size_t changed_pixels = 0;
+        size_t total_pixels = current.size() / 4;  // BGRA 格式
+
+        // 比较每个像素（只比较亮度，忽略细微变化）
+        for (size_t i = 0; i < current.size(); i += 4) {
+            // 计算亮度差异
+            int curr_brightness = (current[i] + current[i+1] + current[i+2]) / 3;
+            int last_brightness = (last[i] + last[i+1] + last[i+2]) / 3;
+            int diff = std::abs(curr_brightness - last_brightness);
+
+            // 如果亮度差异超过阈值（比如 15），认为像素有变化
+            if (diff > 15) {
+                changed_pixels++;
+            }
+        }
+
+        return static_cast<float>(changed_pixels) / total_pixels;
+    };
 
     while (g_running && webServer.IsRunning()) {
         auto current_time = std::chrono::high_resolution_clock::now();
@@ -291,6 +322,34 @@ int RunWebRemoteMode(const Options& options) {
                     ocr_data = frame_data;  // 使用完整帧
                 }
 
+                // 计算帧变化率，如果变化率低于阈值则跳过 OCR
+                float change_rate = CalculateFrameChange(ocr_data, last_ocr_data);
+                bool should_do_ocr = (change_rate >= CHANGE_THRESHOLD);
+
+                // 如果 OCR 区域大小变化，也强制执行 OCR
+                if (ocr_width != last_ocr_width || ocr_height != last_ocr_height) {
+                    should_do_ocr = true;
+                }
+
+                if (!should_do_ocr) {
+                    // 变化率低于阈值，跳过 OCR
+                    std::cout << "[OCR] Skip: change rate " << (change_rate * 100) << "% < threshold" << std::endl;
+                    // 但仍更新上一帧数据
+                    last_ocr_data = ocr_data;
+                    last_ocr_width = ocr_width;
+                    last_ocr_height = ocr_height;
+                    // 小延迟避免循环太快占用CPU
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
+
+                std::cout << "[OCR] Execute: change rate " << (change_rate * 100) << "%" << std::endl;
+
+                // 更新上一帧数据
+                last_ocr_data = ocr_data;
+                last_ocr_width = ocr_width;
+                last_ocr_height = ocr_height;
+
                 // 根据 OCR 类型选择引擎
                 OCRType ocr_type;
                 if (s_ocr_type == "ollama") {
@@ -322,6 +381,9 @@ int RunWebRemoteMode(const Options& options) {
                     std::cout << "[OCR] " << current_text << std::endl;
                     last_ocr_text = current_text;
                     s_latest_ocr_text = current_text;  // 更新 web OCR 显示
+
+                    // 通过 WebSocket 推送 OCR 结果到前端
+                    webServer.BroadcastOCR(current_text);
 
                     if (!options.output_file.empty()) {
                         if (start_time == 0) {

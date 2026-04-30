@@ -70,6 +70,19 @@ else()
     message(STATUS "iconv not found as separate library, using builtin")
 endif()
 
+# libwebsockets
+find_library(LWS_LIBRARY websockets
+    PATHS /opt/homebrew/lib /usr/local/lib)
+find_path(LWS_INCLUDE_DIR "libwebsockets.h"
+    PATHS /opt/homebrew/include /usr/local/include)
+if(LWS_LIBRARY AND LWS_INCLUDE_DIR)
+    message(STATUS "Found libwebsockets: ${LWS_LIBRARY}")
+    include_directories(${LWS_INCLUDE_DIR})
+    target_link_libraries(subtitle_extractor PRIVATE ${LWS_LIBRARY})
+else()
+    message(FATAL_ERROR "libwebsockets not found - install with: brew install libwebsockets")
+endif()
+
 # macOS 特定框架
 if(APPLE)
     find_package(Threads REQUIRED)

@@ -6,54 +6,43 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <mutex>
+#include <set>
 
-/// Web 远程控制服务器
+// Forward declaration
+struct lws_context;
+struct lws;
+
+/// Web 远程控制服务器 (WebSocket 版本 - 使用 libwebsockets)
 /// 提供浏览器访问 DOSBox-X 画面和发送键盘输入
 class WebRemoteServer {
 public:
     /// 输入回调函数类型
-    /// @param key_states 键盘状态数组 (8个 uint32_t)
-    /// @param mouse_dx 鼠标 X 增量
-    /// @param mouse_dy 鼠盘 Y 增量
-    /// @param mouse_btn 鼠盘按钮状态
     using InputCallback = std::function<void(
         const uint32_t* key_states,
+        float mouse_x,
+        float mouse_y,
         float mouse_dx,
         float mouse_dy,
         uint8_t mouse_btn
     )>;
 
     /// 帧数据获取函数类型
-    /// @return 帧缓冲数据 (ARGB 格式) 和宽高
     using FrameGetter = std::function<std::vector<uint8_t>(uint16_t& width, uint16_t& height)>;
 
     /// OCR 结果获取函数类型
-    /// @return OCR 识别的文本
     using OCRGetter = std::function<std::string()>;
 
     /// OCR 区域设置函数类型
-    /// @param x 区域左上角 x
-    /// @param y 区域左上角 y
-    /// @param width 区域宽度
-    /// @param height 区域高度
-    /// @param valid 是否有效（false 表示清除区域）
     using OCRRegionSetter = std::function<void(int x, int y, int width, int height, bool valid)>;
 
     /// OCR 类型设置函数类型
-    /// @param ocr_type OCR 类型 ("paddle" 或 "vision")
     using OCRTypeSetter = std::function<void(const std::string& ocr_type)>;
 
     WebRemoteServer();
     ~WebRemoteServer();
 
     /// 启动服务器
-    /// @param port 端口号 (默认 9091)
-    /// @param frame_getter 获取帧数据的回调
-    /// @param input_callback 处理输入的回调
-    /// @param ocr_getter 获取 OCR 结果的回调（可选）
-    /// @param ocr_region_setter 设置 OCR 区域的回调（可选）
-    /// @param ocr_type_setter 设置 OCR 类型的回调（可选）
-    /// @return 成功返回 true
     bool Start(int port, FrameGetter frame_getter, InputCallback input_callback,
                OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr,
                OCRTypeSetter ocr_type_setter = nullptr);
@@ -67,25 +56,37 @@ public:
     /// 获取服务器 URL
     std::string GetURL() const;
 
-private:
-    std::atomic<bool> m_running;
-    std::thread m_thread;
-    int m_port;
-    int m_socket;
+    /// 广播帧数据到所有客户端
+    void BroadcastFrame(const std::vector<uint8_t>& frame_data, uint16_t width, uint16_t height);
 
-    FrameGetter m_frameGetter;
+    /// 广播 OCR 结果到所有客户端
+    void BroadcastOCR(const std::string& ocr_text);
+
+    // === Internal state (public for callback access) ===
+    std::string m_htmlContent;
     InputCallback m_inputCallback;
-    OCRGetter m_ocrGetter;
     OCRRegionSetter m_ocrRegionSetter;
     OCRTypeSetter m_ocrTypeSetter;
 
-    std::string m_htmlContent;  // 缓存 HTML 内容
+    std::set<lws*> m_wsiClients;
+    std::mutex m_clientsMutex;
 
-    void ServerLoop();
-    void HandleRequest(int client_socket);
-    std::vector<uint8_t> EncodeFrameToJPEG(
-        const uint8_t* argb_data,
-        int width,
-        int height
-    );
+    std::vector<std::vector<uint8_t>> m_frameQueue;
+    std::vector<std::string> m_ocrQueue;
+    std::mutex m_queueMutex;
+
+private:
+    std::atomic<bool> m_running;
+    int m_port;
+
+    FrameGetter m_frameGetter;
+    OCRGetter m_ocrGetter;
+
+    lws_context* m_context;
+    std::thread m_thread;
+
+    void ServiceLoop();
 };
+
+// Global server instance pointer (for callbacks)
+extern WebRemoteServer* g_web_server_instance;
