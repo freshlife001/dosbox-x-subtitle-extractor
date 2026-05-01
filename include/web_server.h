@@ -39,13 +39,16 @@ public:
     /// OCR 类型设置函数类型
     using OCRTypeSetter = std::function<void(const std::string& ocr_type)>;
 
+    /// 帧更新请求函数类型 (触发DOSBox-X刷新帧缓冲)
+    using FrameUpdateRequester = std::function<void()>;
+
     WebRemoteServer();
     ~WebRemoteServer();
 
     /// 启动服务器
     bool Start(int port, FrameGetter frame_getter, InputCallback input_callback,
                OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr,
-               OCRTypeSetter ocr_type_setter = nullptr);
+               OCRTypeSetter ocr_type_setter = nullptr, FrameUpdateRequester frame_requester = nullptr);
 
     /// 停止服务器
     void Stop();
@@ -67,6 +70,7 @@ public:
     InputCallback m_inputCallback;
     OCRRegionSetter m_ocrRegionSetter;
     OCRTypeSetter m_ocrTypeSetter;
+    FrameUpdateRequester m_frameRequester;
 
     std::set<lws*> m_wsiClients;
     std::mutex m_clientsMutex;
@@ -74,6 +78,13 @@ public:
     std::vector<std::vector<uint8_t>> m_frameQueue;
     std::vector<std::string> m_ocrQueue;
     std::mutex m_queueMutex;
+
+    // Cached frame data for continuous broadcast when GameLink has no new data
+    std::vector<uint8_t> m_lastFrameData;
+    uint16_t m_lastWidth = 0;
+    uint16_t m_lastHeight = 0;
+    bool m_lastFrameValid = false;
+    std::mutex m_frameCacheMutex;
 
 private:
     std::atomic<bool> m_running;

@@ -4,72 +4,72 @@
     <meta charset="UTF-8">
     <title>DOSBox-X Remote Control</title>
     <style>
-        body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        #screen-container { position: relative; }
+        body { margin: 0; background: #000; height: 100vh; }
+        #screen-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
         canvas { border: 2px solid #333; display: block; }
-        #info { position: fixed; top: 10px; left: 10px; color: #fff; font-family: monospace; }
-        #ocr { position: fixed; bottom: 60px; right: 10px; color: #0f0; font-family: monospace; background: rgba(0,0,0,0.8); padding: 10px; font-size: 16px; max-width: 500px; z-index: 100; white-space: pre-wrap; }
-        #translation { position: fixed; color: #ff0; font-family: monospace; background: rgba(0,0,0,0.85); padding: 10px; font-size: 18px; z-index: 100; white-space: pre-wrap; border: 1px solid #ff0; cursor: move; user-select: none; display: flex; flex-direction: column; }
-        #translation-text { cursor: text; user-select: text; flex: 1; overflow: auto; min-height: 0; }
-        #translation-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #f80 50%); }
-        #controls { position: fixed; bottom: 10px; left: 10px; color: #fff; font-family: monospace; }
-        #controls button { margin: 5px; padding: 8px 16px; cursor: pointer; }
-        #controls select { margin: 5px; padding: 5px; background: #333; color: #fff; border: 1px solid #fff; cursor: pointer; }
-        #region-info { position: fixed; bottom: 10px; right: 10px; color: #0ff; font-family: monospace; background: rgba(0,0,0,0.8); padding: 10px; }
+        #info { position: absolute; top: 10px; left: 10px; color: #fff; font-family: monospace; font-size: 12px; z-index: 200; }
+        #output-box { position: absolute; bottom: 10px; left: 10px; right: 10px; background: rgba(0,0,0,0.85); padding: 10px; z-index: 200; border: 1px solid #ff0; cursor: move; user-select: none; display: flex; flex-direction: column; max-height: 200px; }
+        #ocr-line { color: #0f0; font-family: monospace; font-size: 14px; margin-bottom: 5px; white-space: pre-wrap; cursor: text; user-select: text; }
+        #translation-line { color: #ff0; font-family: monospace; font-size: 16px; white-space: pre-wrap; cursor: text; user-select: text; flex: 1; overflow: auto; }
+        #output-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #f80 50%); }
+        #controls { position: absolute; top: 35px; left: 10px; color: #fff; font-family: monospace; z-index: 200; font-size: 11px; }
+        #controls button { margin: 2px; padding: 4px 8px; cursor: pointer; font-size: 11px; }
+        #controls select { margin: 2px; padding: 3px; background: #333; color: #fff; border: 1px solid #fff; cursor: pointer; font-size: 11px; }
+        #region-info { position: absolute; top: 35px; right: 10px; color: #0ff; font-family: monospace; background: rgba(0,0,0,0.8); padding: 5px; font-size: 11px; z-index: 200; }
         .region-overlay { position: absolute; border: 2px solid #ff0; background: rgba(255,255,0,0.2); pointer-events: none; }
-        #connection-status { position: fixed; top: 10px; right: 10px; color: #fff; font-family: monospace; }
+        #connection-status { position: absolute; top: 10px; right: 10px; color: #fff; font-family: monospace; font-size: 12px; z-index: 200; }
     </style>
 </head>
 <body>
-    <div id="info">FPS: <span id="fps">0</span> | Mouse: <span id="mouse-pos">x:0 y:0</span> | Δ: <span id="mouse-delta">dx:0 dy:0</span></div>
-    <div id="connection-status">WS: <span id="ws-status">Disconnected</span></div>
-    <div id="ocr">OCR: <span id="ocr-text">-</span></div>
-    <div id="translation">
-        <div id="translation-text">-</div>
-        <div id="translation-resize"></div>
-    </div>
-    <div id="controls">
-        <button id="fullscreen">Fullscreen</button>
-        <button id="select-region">Select OCR Region</button>
-        <button id="reset-region">Reset Region</button>
-        <select id="ocr-type-select">
-            <option value="ollama">Ollama OCR</option>
-            <option value="vision">Vision OCR</option>
-        </select>
-        <select id="lang-select">
-            <option value="zh">中文</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-            <option value="ru">Русский</option>
-        </select>
-        <span id="mode-info"></span>
-    </div>
-    <div id="region-info">Region: Full Screen</div>
     <div id="screen-container">
+        <div id="info">FPS: <span id="fps">0</span> | Mouse: <span id="mouse-pos">x:0 y:0</span> | Δ: <span id="mouse-delta">dx:0 dy:0</span></div>
+        <div id="connection-status">WS: <span id="ws-status">Disconnected</span></div>
+        <div id="output-box">
+            <div id="ocr-line">OCR: <span id="ocr-text">-</span></div>
+            <div id="translation-line">翻译: <span id="translation-text">-</span></div>
+            <div id="output-resize"></div>
+        </div>
+        <div id="controls">
+            <button id="fullscreen">Fullscreen</button>
+            <button id="select-region">Select OCR Region</button>
+            <button id="reset-region">Reset Region</button>
+            <select id="ocr-type-select">
+                <option value="ollama">Ollama OCR</option>
+                <option value="vision">Vision OCR</option>
+            </select>
+            <select id="lang-select">
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="ru">Русский</option>
+            </select>
+            <span id="mode-info"></span>
+        </div>
+        <div id="region-info">Region: Full Screen</div>
         <canvas id="screen"></canvas>
         <div id="region-overlay" class="region-overlay" style="display:none;"></div>
     </div>
 
     <script>
 const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d');
-const fpsSpan = document.getElementById('fps');
-const wsStatusSpan = document.getElementById('ws-status');
-const ocrText = document.getElementById('ocr-text');
-const translationText = document.getElementById('translation-text');
-const screenContainer = document.getElementById('screen-container');
-const regionOverlay = document.getElementById('region-overlay');
-const regionInfo = document.getElementById('region-info');
-const modeInfo = document.getElementById('mode-info');
-const selectBtn = document.getElementById('select-region');
-const resetBtn = document.getElementById('reset-region');
-const langSelect = document.getElementById('lang-select');
-const ocrTypeSelect = document.getElementById('ocr-type-select');
-const fullscreenBtn = document.getElementById('fullscreen');
+    const ctx = canvas.getContext('2d');
+    let fpsSpan = document.getElementById('fps');
+    let wsStatusSpan = document.getElementById('ws-status');
+    let ocrText = document.getElementById('ocr-text');
+    let translationText = document.getElementById('translation-text');
+    const screenContainer = document.getElementById('screen-container');
+    const regionOverlay = document.getElementById('region-overlay');
+    let regionInfo = document.getElementById('region-info');
+    const modeInfo = document.getElementById('mode-info');
+    let selectBtn = document.getElementById('select-region');
+    let resetBtn = document.getElementById('reset-region');
+    const langSelect = document.getElementById('lang-select');
+    const ocrTypeSelect = document.getElementById('ocr-type-select');
+    let fullscreenBtn = document.getElementById('fullscreen');
 
 // WebSocket connection
 let ws = null;
@@ -84,7 +84,8 @@ function connectWebSocket() {
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-        wsStatusSpan.textContent = 'Connected';
+        const t = UI_LANGS[currentLang] || UI_LANGS['en'];
+        wsStatusSpan.textContent = t.connected;
         wsStatusSpan.style.color = '#0f0';
         console.log('[WS] Connected');
 
@@ -93,7 +94,8 @@ function connectWebSocket() {
     };
 
     ws.onclose = () => {
-        wsStatusSpan.textContent = 'Disconnected';
+        const t = UI_LANGS[currentLang] || UI_LANGS['en'];
+        wsStatusSpan.textContent = t.disconnected;
         wsStatusSpan.style.color = '#f00';
         console.log('[WS] Disconnected');
 
@@ -125,7 +127,38 @@ function handleFrameData(data) {
     const view = new DataView(data);
     const type = view.getUint8(0);
 
-    if (type === 0x01) {  // Frame type
+    if (type === 0x02) {  // JPEG frame type
+        const width = view.getUint16(1, true);
+        const height = view.getUint16(3, true);
+
+        if (width < 32 || height < 32 || width > 2048 || height > 2048) return;
+
+        // JPEG data (skip 5-byte header)
+        const jpegData = new Uint8Array(data, 5);
+        const blob = new Blob([jpegData], {type: 'image/jpeg'});
+
+        // Use createImageBitmap - no blob URL needed
+        createImageBitmap(blob).then(imageBitmap => {
+            if (canvas.width !== width || canvas.height !== height) {
+                canvas.width = width;
+                canvas.height = height;
+            }
+            ctx.drawImage(imageBitmap, 0, 0);
+            imageBitmap.close();  // Release bitmap memory
+
+            showRegionOverlay();
+
+            // FPS
+            frameCount++;
+            const now = performance.now();
+            if (now - lastTime >= 1000) {
+                fpsSpan.textContent = frameCount;
+                frameCount = 0;
+                lastTime = now;
+            }
+        }).catch(err => console.error('[JPEG] Decode error:', err));
+
+    } else if (type === 0x01) {  // Raw BGRA frame type (fallback)
         const width = view.getUint16(1, true);
         const height = view.getUint16(3, true);
 
@@ -219,10 +252,154 @@ const LANG_NAMES = {
 };
 let currentLang = 'zh';
 
-langSelect.addEventListener('change', () => {
-    currentLang = langSelect.value;
-    localStorage.setItem('translationLang', currentLang);
-});
+    // UI language translations
+    const UI_LANGS = {
+        zh: {
+            fps: 'FPS',
+            mouse: '鼠标',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: '翻译',
+            fullscreen: '全屏',
+            selectRegion: '选择OCR区域',
+            resetRegion: '重置区域',
+            region: '区域',
+            fullScreen: '全屏幕',
+            connected: '已连接',
+            disconnected: '未连接'
+        },
+        en: {
+            fps: 'FPS',
+            mouse: 'Mouse',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: 'Translation',
+            fullscreen: 'Fullscreen',
+            selectRegion: 'Select OCR Region',
+            resetRegion: 'Reset Region',
+            region: 'Region',
+            fullScreen: 'Full Screen',
+            connected: 'Connected',
+            disconnected: 'Disconnected'
+        },
+        ja: {
+            fps: 'FPS',
+            mouse: 'マウス',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: '翻訳',
+            fullscreen: '全画面',
+            selectRegion: 'OCR領域選択',
+            resetRegion: '領域リセット',
+            region: '領域',
+            fullScreen: '全画面',
+            connected: '接続済み',
+            disconnected: '未接続'
+        },
+        ko: {
+            fps: 'FPS',
+            mouse: '마우스',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: '번역',
+            fullscreen: '전체화면',
+            selectRegion: 'OCR 영역 선택',
+            resetRegion: '영역 리셋',
+            region: '영역',
+            fullScreen: '전체 화면',
+            connected: '연결됨',
+            disconnected: '연결안됨'
+        },
+        es: {
+            fps: 'FPS',
+            mouse: 'Ratón',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: 'Traducción',
+            fullscreen: 'Pantalla completa',
+            selectRegion: 'Seleccionar región OCR',
+            resetRegion: 'Reiniciar región',
+            region: 'Región',
+            fullScreen: 'Pantalla completa',
+            connected: 'Conectado',
+            disconnected: 'Desconectado'
+        },
+        fr: {
+            fps: 'FPS',
+            mouse: 'Souris',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: 'Traduction',
+            fullscreen: 'Plein écran',
+            selectRegion: 'Sélectionner région OCR',
+            resetRegion: 'Réinitialiser région',
+            region: 'Région',
+            fullScreen: 'Plein écran',
+            connected: 'Connecté',
+            disconnected: 'Déconnecté'
+        },
+        de: {
+            fps: 'FPS',
+            mouse: 'Maus',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: 'Übersetzung',
+            fullscreen: 'Vollbild',
+            selectRegion: 'OCR-Bereich wählen',
+            resetRegion: 'Bereich zurücksetzen',
+            region: 'Bereich',
+            fullScreen: 'Vollbild',
+            connected: 'Verbunden',
+            disconnected: 'Getrennt'
+        },
+        ru: {
+            fps: 'FPS',
+            mouse: 'Мышь',
+            delta: 'Δ',
+            ws: 'WS',
+            ocr: 'OCR',
+            translation: 'Перевод',
+            fullscreen: 'Полный экран',
+            selectRegion: 'Выбрать область OCR',
+            resetRegion: 'Сбросить область',
+            region: 'Область',
+            fullScreen: 'Полный экран',
+            connected: 'Подключено',
+            disconnected: 'Отключено'
+        }
+    };
+
+    function updateUILanguage(lang) {
+        const t = UI_LANGS[lang] || UI_LANGS['en'];
+        document.getElementById('info').innerHTML = `${t.fps}: <span id="fps">0</span> | ${t.mouse}: <span id="mouse-pos">x:0 y:0</span> | ${t.delta}: <span id="mouse-delta">dx:0 dy:0</span>`;
+        document.getElementById('connection-status').innerHTML = `${t.ws}: <span id="ws-status">${t.disconnected}</span>`;
+        document.getElementById('ocr-line').innerHTML = `${t.ocr}: <span id="ocr-text">-</span>`;
+        document.getElementById('translation-line').innerHTML = `${t.translation}: <span id="translation-text">-</span>`;
+        fullscreenBtn.textContent = t.fullscreen;
+        selectBtn.textContent = t.selectRegion;
+        resetBtn.textContent = t.resetRegion;
+        regionInfo.textContent = `${t.region}: ${t.fullScreen}`;
+
+        // Update refs after DOM change
+        fpsSpan = document.getElementById('fps');
+        wsStatusSpan = document.getElementById('ws-status');
+        ocrText = document.getElementById('ocr-text');
+        translationText = document.getElementById('translation-text');
+        wsStatusSpan.textContent = ws && ws.readyState === WebSocket.OPEN ? t.connected : t.disconnected;
+    }
+
+    langSelect.addEventListener('change', () => {
+        currentLang = langSelect.value;
+        localStorage.setItem('translationLang', currentLang);
+        updateUILanguage(currentLang);
+    });
 
 function loadLangConfig() {
     const saved = localStorage.getItem('translationLang');
@@ -271,6 +448,23 @@ document.addEventListener('mousemove', (e) => {
         mouse_dx = e.movementX;
         mouse_dy = e.movementY;
         sendInput();
+    }
+});
+
+// Pointer lock mouse buttons
+document.addEventListener('mousedown', (e) => {
+    if (isPointerLocked && e.target === canvas) {
+        mouseBtn = (e.button === 0) ? 1 : (e.button === 2) ? 2 : (e.button === 1) ? 4 : 0;
+        sendInput();
+        e.preventDefault();
+    }
+});
+
+document.addEventListener('mouseup', (e) => {
+    if (isPointerLocked && e.target === canvas) {
+        mouseBtn = 0;
+        sendInput();
+        e.preventDefault();
     }
 });
 
@@ -372,59 +566,55 @@ let selectMode = false;
 let dragStart = null;
 let dragEnd = null;
 
-// Translation Box drag & resize
-const translationBox = document.getElementById('translation');
-const translationResize = document.getElementById('translation-resize');
+// Output Box drag & resize
+const outputBox = document.getElementById('output-box');
+const outputResize = document.getElementById('output-resize');
 let transDragging = false;
 let transResizing = false;
 let transDragStart = { x: 0, y: 0 };
 let transBoxStart = { x: 0, y: 0, width: 0, height: 0 };
 
 function saveTranslationPos() {
-    localStorage.setItem('translationPos', JSON.stringify({
-        left: translationBox.style.left,
-        top: translationBox.style.top,
-        bottom: translationBox.style.bottom,
-        width: translationBox.style.width,
-        height: translationBox.style.height
+    localStorage.setItem('outputPos', JSON.stringify({
+        left: outputBox.style.left,
+        top: outputBox.style.top,
+        bottom: outputBox.style.bottom,
+        width: outputBox.style.width,
+        height: outputBox.style.height
     }));
 }
 
 function loadTranslationPos() {
-    const saved = localStorage.getItem('translationPos');
+    const saved = localStorage.getItem('outputPos');
     if (saved) {
         try {
             const pos = JSON.parse(saved);
-            if (pos.left) translationBox.style.left = pos.left;
-            if (pos.top) translationBox.style.top = pos.top;
-            if (pos.bottom) translationBox.style.bottom = pos.bottom || '';
-            if (pos.width) translationBox.style.width = pos.width;
-            if (pos.height) translationBox.style.height = pos.height || '';
+            if (pos.left) outputBox.style.left = pos.left;
+            if (pos.top) outputBox.style.top = pos.top;
+            if (pos.bottom) outputBox.style.bottom = pos.bottom || '';
+            if (pos.width) outputBox.style.width = pos.width;
+            if (pos.height) outputBox.style.height = pos.height || '';
         } catch (e) {
-            localStorage.removeItem('translationPos');
+            localStorage.removeItem('outputPos');
         }
-    }
-    if (!translationBox.style.left && !translationBox.style.top) {
-        translationBox.style.left = '10px';
-        translationBox.style.bottom = '60px';
-        translationBox.style.width = '500px';
     }
 }
 
-translationBox.addEventListener('mousedown', (e) => {
-    if (e.target === translationResize) return;
+outputBox.addEventListener('mousedown', (e) => {
+    if (e.target === outputResize) return;
     transDragging = true;
     transDragStart = { x: e.clientX, y: e.clientY };
-    const rect = translationBox.getBoundingClientRect();
-    transBoxStart = { x: rect.left, y: rect.top };
-    translationBox.style.bottom = '';
+    const containerRect = screenContainer.getBoundingClientRect();
+    const boxRect = outputBox.getBoundingClientRect();
+    transBoxStart = { x: boxRect.left - containerRect.left, y: boxRect.top - containerRect.top };
+    outputBox.style.bottom = '';
     e.preventDefault();
 });
 
-translationResize.addEventListener('mousedown', (e) => {
+outputResize.addEventListener('mousedown', (e) => {
     transResizing = true;
     transDragStart = { x: e.clientX, y: e.clientY };
-    const rect = translationBox.getBoundingClientRect();
+    const rect = outputBox.getBoundingClientRect();
     transBoxStart = { width: rect.width, height: rect.height };
     e.preventDefault();
     e.stopPropagation();
@@ -434,14 +624,14 @@ document.addEventListener('mousemove', (e) => {
     if (transDragging) {
         const dx = e.clientX - transDragStart.x;
         const dy = e.clientY - transDragStart.y;
-        translationBox.style.left = (transBoxStart.x + dx) + 'px';
-        translationBox.style.top = (transBoxStart.y + dy) + 'px';
+        outputBox.style.left = (transBoxStart.x + dx) + 'px';
+        outputBox.style.top = (transBoxStart.y + dy) + 'px';
     }
     if (transResizing) {
         const dx = e.clientX - transDragStart.x;
         const dy = e.clientY - transDragStart.y;
-        translationBox.style.width = Math.max(200, transBoxStart.width + dx) + 'px';
-        translationBox.style.height = Math.max(50, transBoxStart.height + dy) + 'px';
+        outputBox.style.width = Math.max(200, transBoxStart.width + dx) + 'px';
+        outputBox.style.height = Math.max(50, transBoxStart.height + dy) + 'px';
     }
 });
 
@@ -522,6 +712,7 @@ function sendRegion(region) {
 }
 
 function loadSavedRegion() {
+    const t = UI_LANGS[currentLang] || UI_LANGS['en'];
     const saved = localStorage.getItem('ocrRegion');
     if (saved) {
         try {
@@ -529,7 +720,7 @@ function loadSavedRegion() {
             if (parsed.x !== undefined && parsed.y !== undefined &&
                 parsed.width !== undefined && parsed.height !== undefined) {
                 ocrRegion = parsed;
-                regionInfo.textContent = `Region: (${ocrRegion.x},${ocrRegion.y}) ${ocrRegion.width}x${ocrRegion.height}`;
+                regionInfo.textContent = `${t.region}: (${ocrRegion.x},${ocrRegion.y}) ${ocrRegion.width}x${ocrRegion.height}`;
                 sendRegion(ocrRegion);
             } else {
                 localStorage.removeItem('ocrRegion');
@@ -553,7 +744,7 @@ resetBtn.addEventListener('click', () => {
     dragStart = null;
     dragEnd = null;
     regionOverlay.style.display = 'none';
-    regionInfo.textContent = 'Region: Full Screen';
+    regionInfo.textContent = `${t.region}: ${t.fullScreen}`;
     modeInfo.textContent = '';
     selectBtn.disabled = false;
     sendRegion(null);
@@ -623,8 +814,9 @@ canvas.addEventListener('mouseup', (e) => {
         const y2 = Math.max(dragStart.y, dragEnd.y);
 
         if (x2 - x1 > 10 && y2 - y1 > 10) {
+            const t = UI_LANGS[currentLang] || UI_LANGS['en'];
             ocrRegion = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
-            regionInfo.textContent = `Region: (${x1},${y1}) ${x2-x1}x${y2-y1}`;
+            regionInfo.textContent = `${t.region}: (${x1},${y1}) ${x2-x1}x${y2-y1}`;
             sendRegion(ocrRegion);
         }
 
@@ -644,9 +836,12 @@ canvas.addEventListener('mouseup', (e) => {
 
 function updateRegionOverlay() {
     if (dragStart && dragEnd) {
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = rect.width / canvas.width;
-        const scaleY = rect.height / canvas.height;
+        const scaleX = canvas.clientWidth / canvas.width;
+        const scaleY = canvas.clientHeight / canvas.height;
+
+        // canvas 在 screen-container 内居中，需要计算偏移
+        const canvasOffsetX = (screenContainer.clientWidth - canvas.clientWidth) / 2;
+        const canvasOffsetY = (screenContainer.clientHeight - canvas.clientHeight) / 2;
 
         const x1 = Math.min(dragStart.x, dragEnd.x);
         const y1 = Math.min(dragStart.y, dragEnd.y);
@@ -654,8 +849,8 @@ function updateRegionOverlay() {
         const h = Math.abs(dragEnd.y - dragStart.y);
 
         regionOverlay.style.display = 'block';
-        regionOverlay.style.left = (x1 * scaleX) + 'px';
-        regionOverlay.style.top = (y1 * scaleY) + 'px';
+        regionOverlay.style.left = (canvasOffsetX + x1 * scaleX) + 'px';
+        regionOverlay.style.top = (canvasOffsetY + y1 * scaleY) + 'px';
         regionOverlay.style.width = (w * scaleX) + 'px';
         regionOverlay.style.height = (h * scaleY) + 'px';
     }
@@ -663,13 +858,15 @@ function updateRegionOverlay() {
 
 function showRegionOverlay() {
     if (ocrRegion) {
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = rect.width / canvas.width;
-        const scaleY = rect.height / canvas.height;
+        const scaleX = canvas.clientWidth / canvas.width;
+        const scaleY = canvas.clientHeight / canvas.height;
+
+        const canvasOffsetX = (screenContainer.clientWidth - canvas.clientWidth) / 2;
+        const canvasOffsetY = (screenContainer.clientHeight - canvas.clientHeight) / 2;
 
         regionOverlay.style.display = 'block';
-        regionOverlay.style.left = (ocrRegion.x * scaleX) + 'px';
-        regionOverlay.style.top = (ocrRegion.y * scaleY) + 'px';
+        regionOverlay.style.left = (canvasOffsetX + ocrRegion.x * scaleX) + 'px';
+        regionOverlay.style.top = (canvasOffsetY + ocrRegion.y * scaleY) + 'px';
         regionOverlay.style.width = (ocrRegion.width * scaleX) + 'px';
         regionOverlay.style.height = (ocrRegion.height * scaleY) + 'px';
     } else {
@@ -697,9 +894,10 @@ let frameCount = 0;
 let lastTime = performance.now();
 
 // Init
+loadLangConfig();
+updateUILanguage(currentLang);
 loadSavedRegion();
 loadTranslationPos();
-loadLangConfig();
 loadOcrTypeConfig();
 connectWebSocket();
     </script>

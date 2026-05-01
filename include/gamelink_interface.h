@@ -200,6 +200,9 @@ public:
         uint8_t mouse_btn = 0
     );
 
+    /// 请求帧缓冲更新 (发送tick到DOSBox-X以触发帧刷新)
+    void RequestFrameUpdate();
+
 private:
     sSharedMemoryMap_R4* m_pSharedMemory;
     std::vector<uint32_t> m_monitoredAddresses;

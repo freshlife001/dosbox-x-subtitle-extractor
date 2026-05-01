@@ -7,6 +7,7 @@
 #include <cstring>
 #include <chrono>
 #include <vector>
+#include <opencv2/opencv.hpp>
 
 #include <libwebsockets.h>
 
@@ -101,7 +102,7 @@ WebRemoteServer::~WebRemoteServer() {
 
 bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback input_callback,
                               OCRGetter ocr_getter, OCRRegionSetter ocr_region_setter,
-                              OCRTypeSetter ocr_type_setter) {
+                              OCRTypeSetter ocr_type_setter, FrameUpdateRequester frame_requester) {
     g_web_server_instance = this;
     m_port = port;
     m_frameGetter = frame_getter;
@@ -109,6 +110,7 @@ bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback in
     m_ocrGetter = ocr_getter;
     m_ocrRegionSetter = ocr_region_setter;
     m_ocrTypeSetter = ocr_type_setter;
+    m_frameRequester = frame_requester;
     m_htmlContent = LoadHTMLFile("resources/web_remote.html");
 
     lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE, nullptr);
@@ -166,48 +168,113 @@ void WebRemoteServer::ServiceLoop() {
     constexpr int FRAME_INTERVAL_MS = 33;  // ~30 FPS
 
     while (m_running) {
-        // 检查是否需要发送新帧
+        // 先处理 lws 事件（快速返回）
+        lws_service(m_context, 0);
+
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
 
         if (elapsed >= FRAME_INTERVAL_MS) {
             last_frame_time = now;
 
+            // 请求 DOSBox-X 更新帧缓冲
+            if (m_frameRequester) {
+                m_frameRequester();
+            }
+
             // 获取帧数据
             uint16_t width, height;
             auto frame_data = m_frameGetter(width, height);
 
+            // 如果有新帧数据，缓存它
             if (!frame_data.empty()) {
-                BroadcastFrame(frame_data, width, height);
+                std::lock_guard<std::mutex> cache_lock(m_frameCacheMutex);
+                m_lastFrameData = frame_data;
+                m_lastWidth = width;
+                m_lastHeight = height;
+                m_lastFrameValid = true;
+            }
 
-                // 触发 writable 回调
+            // 使用缓存的帧数据进行广播
+            std::vector<uint8_t> broadcast_data;
+            uint16_t bw = 0, bh = 0;
+            {
+                std::lock_guard<std::mutex> cache_lock(m_frameCacheMutex);
+                if (m_lastFrameValid) {
+                    broadcast_data = m_lastFrameData;
+                    bw = m_lastWidth;
+                    bh = m_lastHeight;
+                }
+            }
+
+            if (!broadcast_data.empty()) {
+                BroadcastFrame(broadcast_data, bw, bh);
+
+                // 立即触发 writable 并处理
                 {
                     std::lock_guard<std::mutex> lock(m_clientsMutex);
                     for (lws* wsi : m_wsiClients) {
                         lws_callback_on_writable(wsi);
                     }
                 }
+
+                // 立即处理发送
+                lws_service(m_context, 5);
             }
         }
 
-        // 处理 lws 事件 (超时 10ms)
-        lws_service(m_context, 10);
+        // OCR 消息检查
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            if (!m_ocrQueue.empty()) {
+                lws_cancel_service(m_context);
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
 void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uint16_t width, uint16_t height) {
+    // 将 BGRA 数据转换为 JPEG 以减少传输大小
     std::vector<uint8_t> message;
-    message.push_back(0x01);
-    message.push_back(width & 0xFF);
-    message.push_back((width >> 8) & 0xFF);
-    message.push_back(height & 0xFF);
-    message.push_back((height >> 8) & 0xFF);
-    message.insert(message.end(), frame_data.begin(), frame_data.end());
+
+    if (!frame_data.empty() && width > 0 && height > 0) {
+        // 创建 OpenCV Mat (BGRA 格式)
+        cv::Mat mat(height, width, CV_8UC4, (void*)frame_data.data());
+
+        // 转换为 BGR (JPEG 编码需要)
+        cv::Mat bgr;
+        cv::cvtColor(mat, bgr, cv::COLOR_BGRA2BGR);
+
+        // 编码为 JPEG
+        std::vector<uint8_t> jpeg_data;
+        std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 80};  // 80% 质量
+        if (cv::imencode(".jpg", bgr, jpeg_data, params)) {
+            // 构建消息: 类型(0x02表示JPEG) + width + height + JPEG数据
+            message.push_back(0x02);  // JPEG frame type
+            message.push_back(width & 0xFF);
+            message.push_back((width >> 8) & 0xFF);
+            message.push_back(height & 0xFF);
+            message.push_back((height >> 8) & 0xFF);
+            message.insert(message.end(), jpeg_data.begin(), jpeg_data.end());
+        } else {
+            // JPEG 编码失败，发送原始数据
+            message.push_back(0x01);
+            message.push_back(width & 0xFF);
+            message.push_back((width >> 8) & 0xFF);
+            message.push_back(height & 0xFF);
+            message.push_back((height >> 8) & 0xFF);
+            message.insert(message.end(), frame_data.begin(), frame_data.end());
+        }
+    }
 
     std::lock_guard<std::mutex> lock(m_queueMutex);
     // 只保留最新帧，丢弃旧的
     m_frameQueue.clear();
-    m_frameQueue.push_back(std::move(message));
+    if (!message.empty()) {
+        m_frameQueue.push_back(std::move(message));
+    }
 }
 
 void WebRemoteServer::BroadcastOCR(const std::string& ocr_text) {
@@ -223,15 +290,13 @@ void WebRemoteServer::BroadcastOCR(const std::string& ocr_text) {
 
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
-        // 只保留最新的 OCR 结果
         m_ocrQueue.clear();
         m_ocrQueue.push_back(std::move(message));
     }
 
-    // 触发 writable 回调立即发送
-    std::lock_guard<std::mutex> lock(m_clientsMutex);
-    for (lws* wsi : m_wsiClients) {
-        lws_callback_on_writable(wsi);
+    // 使用 lws_cancel_service 唤醒服务线程
+    if (m_context) {
+        lws_cancel_service(m_context);
     }
 }
 
@@ -363,37 +428,30 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_SERVER_WRITEABLE: {
-            bool sent_frame = false;
+            std::lock_guard<std::mutex> lock(srv->m_queueMutex);
 
-            {
-                std::lock_guard<std::mutex> lock(srv->m_queueMutex);
-
-                if (!srv->m_ocrQueue.empty()) {
-                    for (const auto& msg : srv->m_ocrQueue) {
-                        size_t total_size = LWS_PRE + msg.size();
-                        std::vector<unsigned char> buf(total_size);
-                        memcpy(&buf[LWS_PRE], msg.data(), msg.size());
-                        lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_TEXT);
-                    }
-                    srv->m_ocrQueue.clear();
+            if (!srv->m_ocrQueue.empty()) {
+                for (const auto& msg : srv->m_ocrQueue) {
+                    size_t total_size = LWS_PRE + msg.size();
+                    std::vector<unsigned char> buf(total_size);
+                    memcpy(&buf[LWS_PRE], msg.data(), msg.size());
+                    lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_TEXT);
                 }
-
-                if (!srv->m_frameQueue.empty()) {
-                    for (const auto& msg : srv->m_frameQueue) {
-                        size_t total_size = LWS_PRE + msg.size();
-                        std::vector<unsigned char> buf(total_size);
-                        memcpy(&buf[LWS_PRE], msg.data(), msg.size());
-                        lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_BINARY);
-                        sent_frame = true;
-                    }
-                    srv->m_frameQueue.clear();
-                }
+                srv->m_ocrQueue.clear();
             }
 
-            // 发送后立即请求下一次 writable，保持持续发送
-            if (sent_frame) {
-                lws_callback_on_writable(wsi);
+            if (!srv->m_frameQueue.empty()) {
+                for (const auto& msg : srv->m_frameQueue) {
+                    size_t total_size = LWS_PRE + msg.size();
+                    std::vector<unsigned char> buf(total_size);
+                    memcpy(&buf[LWS_PRE], msg.data(), msg.size());
+                    lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_BINARY);
+                }
+                srv->m_frameQueue.clear();
             }
+
+            // 总是请求下一次 writable，保持发送循环
+            lws_callback_on_writable(wsi);
             break;
         }
 

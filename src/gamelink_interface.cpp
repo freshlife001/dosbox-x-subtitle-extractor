@@ -411,6 +411,23 @@ void GameLinkInterface::SendInput(
     ReleaseMutex();
 }
 
+void GameLinkInterface::RequestFrameUpdate() {
+    if (!IsConnected()) {
+        return;
+    }
+
+    if (!AcquireMutex(100)) {
+        return;
+    }
+
+    // 设置 WANT_KEYB 标志触发 DOSBox-X 更新帧
+    // 不发送实际输入，只请求帧刷新
+    m_pSharedMemory->input.ready = 1;
+    m_pSharedMemory->flags |= sSharedMemoryMap_R4::FLAG_WANT_KEYB;
+
+    ReleaseMutex();
+}
+
 // ============================================================================
 // 内存扫描功能
 // ============================================================================

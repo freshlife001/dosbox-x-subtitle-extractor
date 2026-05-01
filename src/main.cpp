@@ -232,8 +232,13 @@ int RunWebRemoteMode(const Options& options) {
         s_ocr_type = type;
     };
 
+    // 帧更新请求回调 (触发 DOSBox-X 刷新帧缓冲)
+    auto frameRequester = [&gameLink]() {
+        gameLink.RequestFrameUpdate();
+    };
+
     // 启动 Web 服务器
-    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter, ocrTypeSetter)) {
+    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter, ocrTypeSetter, frameRequester)) {
         std::cerr << "Error: Failed to start web server" << std::endl;
         gameLink.Shutdown();
         return 1;
