@@ -108,7 +108,8 @@ WebRemoteServer::~WebRemoteServer() {
 
 bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback input_callback,
                               OCRGetter ocr_getter, OCRRegionSetter ocr_region_setter,
-                              OCRTypeSetter ocr_type_setter, FrameUpdateRequester frame_requester) {
+                              OCRTypeSetter ocr_type_setter, TranslationLangSetter translation_lang_setter,
+                              FrameUpdateRequester frame_requester) {
     g_web_server_instance = this;
     m_port = port;
     m_frameGetter = frame_getter;
@@ -116,6 +117,7 @@ bool WebRemoteServer::Start(int port, FrameGetter frame_getter, InputCallback in
     m_ocrGetter = ocr_getter;
     m_ocrRegionSetter = ocr_region_setter;
     m_ocrTypeSetter = ocr_type_setter;
+    m_translationLangSetter = translation_lang_setter;
     m_frameRequester = frame_requester;
     m_htmlContent = LoadHTMLFile("resources/web_remote.html");
 
@@ -244,11 +246,6 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
         // 使用 TurboJPEG (比 OpenCV imencode 快 2-5 倍)
         static tjhandle tj_compressor = tjInitCompress();
 
-        // 编码延迟统计
-        static double total_encode_time = 0;
-        static int encode_count = 0;
-        static auto last_stats_time = std::chrono::high_resolution_clock::now();
-
         if (tj_compressor) {
             unsigned char* jpeg_buf = nullptr;
             unsigned long jpeg_size = 0;
@@ -258,9 +255,6 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
             if (!jpeg_buf) {
                 std::cerr << "[TurboJPEG] tjAlloc failed" << std::endl;
             }
-
-            // 记录编码开始时间
-            auto encode_start = std::chrono::high_resolution_clock::now();
 
             int result = tjCompress2(tj_compressor,
                                      frame_data.data(),
@@ -273,25 +267,6 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
                                      TJSAMP_420,
                                      60,
                                      TJFLAG_FASTDCT);
-
-            // 记录编码结束时间
-            auto encode_end = std::chrono::high_resolution_clock::now();
-            double encode_ms = std::chrono::duration<double, std::milli>(encode_end - encode_start).count();
-            total_encode_time += encode_ms;
-            encode_count++;
-
-            // 每秒打印统计
-            auto now = std::chrono::high_resolution_clock::now();
-            double stats_elapsed = std::chrono::duration<double>(now - last_stats_time).count();
-            if (stats_elapsed >= 1.0) {
-                double avg_ms = total_encode_time / encode_count;
-                double fps = encode_count / stats_elapsed;
-                std::cout << "[TurboJPEG Stats] FPS: " << fps << " | Avg latency: " << avg_ms << "ms"
-                          << " | Total frames: " << encode_count << std::endl;
-                total_encode_time = 0;
-                encode_count = 0;
-                last_stats_time = now;
-            }
 
             if (result == 0 && jpeg_buf && jpeg_size > 0) {
                 message.push_back(0x02);
@@ -371,7 +346,28 @@ void WebRemoteServer::BroadcastOCR(const std::string& ocr_text) {
         m_ocrQueue.push_back(std::move(message));
     }
 
-    // 使用 lws_cancel_service 唤醒服务线程
+    if (m_context) {
+        lws_cancel_service(m_context);
+    }
+}
+
+void WebRemoteServer::BroadcastTranslation(const std::string& translation_text) {
+    std::string json_text;
+    for (char c : translation_text) {
+        if (c == '"') json_text += "\\\"";
+        else if (c == '\\') json_text += "\\\\";
+        else if (c == '\n') json_text += "\\n";
+        else if (c == '\r') json_text += "";
+        else json_text += c;
+    }
+    std::string message = "{\"type\":\"translation\",\"text\":\"" + json_text + "\"}";
+
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        m_translationQueue.clear();
+        m_translationQueue.push_back(std::move(message));
+    }
+
     if (m_context) {
         lws_cancel_service(m_context);
     }
@@ -499,6 +495,12 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
                     srv->m_ocrTypeSetter(ocr_type);
                     std::cout << "[WS] OCR type: " << ocr_type << std::endl;
                 }
+            } else if (message.find("\"type\":\"translation-lang\"") != std::string::npos) {
+                std::string lang = ParseJsonString(message, "lang");
+                if (srv->m_translationLangSetter && !lang.empty()) {
+                    srv->m_translationLangSetter(lang);
+                    std::cout << "[WS] Translation lang: " << lang << std::endl;
+                }
             }
             break;
         }
@@ -516,6 +518,16 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
                 srv->m_ocrQueue.clear();
             }
 
+            if (!srv->m_translationQueue.empty()) {
+                for (const auto& msg : srv->m_translationQueue) {
+                    size_t total_size = LWS_PRE + msg.size();
+                    std::vector<unsigned char> buf(total_size);
+                    memcpy(&buf[LWS_PRE], msg.data(), msg.size());
+                    lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_TEXT);
+                }
+                srv->m_translationQueue.clear();
+            }
+
             // 发送帧数据，限制60FPS
             if (!srv->m_frameQueue.empty()) {
                 static auto last_send_time = std::chrono::high_resolution_clock::now();
@@ -530,16 +542,6 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
                     std::vector<unsigned char> buf(total_size);
                     memcpy(&buf[LWS_PRE], msg.data(), msg.size());
                     lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_BINARY);
-
-                    // 发送统计
-                    static int send_count = 0;
-                    static auto last_stats = std::chrono::high_resolution_clock::now();
-                    send_count++;
-                    if (std::chrono::duration<double>(now - last_stats).count() >= 1.0) {
-                        std::cout << "[WS Send] FPS: " << send_count << std::endl;
-                        send_count = 0;
-                        last_stats = now;
-                    }
                 }
             }
 

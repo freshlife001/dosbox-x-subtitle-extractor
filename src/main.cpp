@@ -175,6 +175,9 @@ int RunWebRemoteMode(const Options& options) {
 
     std::cout << "Initializing Game Link for Web Remote Control..." << std::endl;
 
+    // Web 模式下自动启用持续 OCR
+    bool ocr_continuous = true;  // Web 模式下始终启用
+
     if (!gameLink.Initialize()) {
         std::cerr << "Error: Failed to initialize Game Link. Is DOSBox-X running?" << std::endl;
         return 1;
@@ -199,6 +202,9 @@ int RunWebRemoteMode(const Options& options) {
 
     // OCR 类型存储（供 web 服务器使用）
     static std::string s_ocr_type = "ollama";  // 默认使用 Ollama OCR
+
+    // 翻译语言存储（供 web 服务器和翻译使用）
+    static std::string s_translation_lang = "zh";  // 默认翻译为中文
 
     // OCR 区域存储（供 web 服务器和 OCR 循环使用）
     static struct OCRRegion {
@@ -232,13 +238,18 @@ int RunWebRemoteMode(const Options& options) {
         s_ocr_type = type;
     };
 
+    // 翻译语言设置回调
+    auto translationLangSetter = [&webServer](const std::string& lang) {
+        s_translation_lang = lang;
+    };
+
     // 帧更新请求回调 (触发 DOSBox-X 刷新帧缓冲)
     auto frameRequester = [&gameLink]() {
         gameLink.RequestFrameUpdate();
     };
 
     // 启动 Web 服务器
-    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter, ocrTypeSetter, frameRequester)) {
+    if (!webServer.Start(options.web_port, frameGetter, inputCallback, ocrGetter, ocrRegionSetter, ocrTypeSetter, translationLangSetter, frameRequester)) {
         std::cerr << "Error: Failed to start web server" << std::endl;
         gameLink.Shutdown();
         return 1;
@@ -296,7 +307,7 @@ int RunWebRemoteMode(const Options& options) {
             uint16_t width, height;
             auto frame_data = gameLink.GetFrameBufferData(width, height);
 
-            if (!frame_data.empty() && options.ocr_continuous) {
+            if (!frame_data.empty() && ocr_continuous) {
                 // 如果设置了 OCR 区域，裁剪帧数据
                 std::vector<uint8_t> ocr_data;
                 int ocr_width = width;
@@ -386,6 +397,52 @@ int RunWebRemoteMode(const Options& options) {
 
                     // 通过 WebSocket 推送 OCR 结果到前端
                     webServer.BroadcastOCR(current_text);
+
+                    // 自动触发翻译
+                    std::map<std::string, std::string> LANG_NAMES = {
+                        {"zh", "中文"}, {"en", "English"}, {"ja", "日本語"},
+                        {"ko", "한국어"}, {"es", "Español"}, {"fr", "Français"},
+                        {"de", "Deutsch"}, {"ru", "Русский"}
+                    };
+                    auto lang_it = LANG_NAMES.find(s_translation_lang);
+                    std::string target_lang = (lang_it != LANG_NAMES.end()) ? lang_it->second : "中文";
+                    std::cout << "[Translation] Translating to " << target_lang << "..." << std::endl;
+
+                    // 构建带上下文的prompt
+                    static std::vector<std::pair<std::string, std::string>> ocr_history;  // OCR历史记录
+                    static const int MAX_HISTORY = 3;
+
+                    std::string context_lines;
+                    for (const auto& item : ocr_history) {
+                        context_lines += "原文：" + item.first + "\n翻译：" + item.second + "\n\n";
+                    }
+
+                    std::string prompt = "这是日本游戏的屏幕文字。请直接将其翻译为" + target_lang + "。\n\n"
+                        "注意：\n"
+                        "1. 即使文字看起来有编码问题，也要尽力翻译\n"
+                        "2. 只输出翻译结果，不要解释编码问题\n"
+                        "3. 不要输出英文或任何其他语言\n"
+                        "4. 游戏数值(如HP、MP、等级等)保留原样\n\n"
+                        "原文：\n" + current_text + "\n\n"
+                        "翻译结果：";
+
+                    auto trans_start = std::chrono::high_resolution_clock::now();
+                    std::string translation = TranslateText(prompt, target_lang);
+                    auto trans_end = std::chrono::high_resolution_clock::now();
+                    auto trans_ms = std::chrono::duration_cast<std::chrono::milliseconds>(trans_end - trans_start).count();
+
+                    if (!translation.empty()) {
+                        std::cout << "[Translation] " << translation.substr(0, 100) << (translation.length() > 100 ? "..." : "") << " (" << trans_ms << "ms)" << std::endl;
+                        webServer.BroadcastTranslation(translation);
+
+                        // 添加到历史记录
+                        auto it = std::find_if(ocr_history.begin(), ocr_history.end(),
+                            [&](const std::pair<std::string, std::string>& item) { return item.first == current_text; });
+                        if (it == ocr_history.end()) {
+                            ocr_history.push_back({current_text, translation});
+                            if (ocr_history.size() > MAX_HISTORY) ocr_history.erase(ocr_history.begin());
+                        }
+                    }
 
                     if (!options.output_file.empty()) {
                         if (start_time == 0) {

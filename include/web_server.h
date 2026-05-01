@@ -39,6 +39,9 @@ public:
     /// OCR 类型设置函数类型
     using OCRTypeSetter = std::function<void(const std::string& ocr_type)>;
 
+    /// 翻译语言设置函数类型
+    using TranslationLangSetter = std::function<void(const std::string& lang)>;
+
     /// 帧更新请求函数类型 (触发DOSBox-X刷新帧缓冲)
     using FrameUpdateRequester = std::function<void()>;
 
@@ -48,7 +51,8 @@ public:
     /// 启动服务器
     bool Start(int port, FrameGetter frame_getter, InputCallback input_callback,
                OCRGetter ocr_getter = nullptr, OCRRegionSetter ocr_region_setter = nullptr,
-               OCRTypeSetter ocr_type_setter = nullptr, FrameUpdateRequester frame_requester = nullptr);
+               OCRTypeSetter ocr_type_setter = nullptr, TranslationLangSetter translation_lang_setter = nullptr,
+               FrameUpdateRequester frame_requester = nullptr);
 
     /// 停止服务器
     void Stop();
@@ -65,11 +69,15 @@ public:
     /// 广播 OCR 结果到所有客户端
     void BroadcastOCR(const std::string& ocr_text);
 
+    /// 广播翻译结果到所有客户端
+    void BroadcastTranslation(const std::string& translation_text);
+
     // === Internal state (public for callback access) ===
     std::string m_htmlContent;
     InputCallback m_inputCallback;
     OCRRegionSetter m_ocrRegionSetter;
     OCRTypeSetter m_ocrTypeSetter;
+    TranslationLangSetter m_translationLangSetter;
     FrameUpdateRequester m_frameRequester;
 
     std::set<lws*> m_wsiClients;
@@ -77,6 +85,7 @@ public:
 
     std::vector<std::vector<uint8_t>> m_frameQueue;
     std::vector<std::string> m_ocrQueue;
+    std::vector<std::string> m_translationQueue;
     std::mutex m_queueMutex;
 
     // Cached frame data for continuous broadcast when GameLink has no new data

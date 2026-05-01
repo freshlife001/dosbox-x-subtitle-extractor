@@ -213,8 +213,9 @@ function handleTextMessage(message) {
             if (data.text !== lastOcrText) {
                 lastOcrText = data.text;
                 ocrText.textContent = data.text;
-                translateToLanguage(data.text);
             }
+        } else if (data.type === 'translation' && data.text) {
+            translationText.textContent = data.text;
         }
     } catch (e) {
         console.error('[WS] Parse error:', e);
@@ -409,6 +410,10 @@ let currentLang = 'zh';
         currentLang = langSelect.value;
         localStorage.setItem('translationLang', currentLang);
         updateUILanguage(currentLang);
+        // 发送语言设置到后端
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({type: 'translation-lang', lang: currentLang}));
+        }
     });
 
 function loadLangConfig() {
@@ -478,97 +483,10 @@ document.addEventListener('mouseup', (e) => {
     }
 });
 
-// OCR history for translation
+// OCR history (for display only, translation done on backend)
 const ocrHistory = [];
 const MAX_OCR_HISTORY = 3;
 let lastOcrText = '';
-let isTranslating = false;
-
-async function translateToLanguage(newText) {
-    if (!newText || newText.trim() === '' || isTranslating) return;
-    isTranslating = true;
-    translationText.textContent = '';
-
-    const targetLang = LANG_NAMES[currentLang];
-    const contextLines = ocrHistory.map(item =>
-        `原文：${item.original}\n翻译：${item.translation}`
-    ).join('\n\n');
-
-    const prompt = `将以下游戏文本翻译为${targetLang}。上下文仅供参考，不要翻译上下文。
-
-上下文（仅供参考）：
-${contextLines}
-
-原文（需要翻译）：
-${newText}
-
-要求：
-1. 只翻译原文，不要翻译上下文
-2. 只输出翻译结果，不要解释
-3. 保持游戏术语的一致性
-4. 结合上下文理解语义
-5. 游戏数值(如HP、MP、等级等)保留数值部分
-
-翻译：`;
-
-    let fullTranslation = '';
-
-    try {
-        const response = await fetch('http://localhost:11434/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: 'gemma4:26b',
-                prompt: prompt,
-                think: false,
-                stream: true
-            })
-        });
-
-        if (!response.ok) {
-            translationText.textContent = '翻译服务连接失败';
-            isTranslating = false;
-            return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                if (line.trim()) {
-                    try {
-                        const json = JSON.parse(line);
-                        if (json.response) {
-                            fullTranslation += json.response;
-                            translationText.textContent += json.response;
-                        }
-                    } catch (e) {}
-                }
-            }
-        }
-
-        if (fullTranslation.trim()) {
-            const exists = ocrHistory.some(item => item.original === newText);
-            if (!exists) {
-                ocrHistory.push({ original: newText, translation: fullTranslation.trim() });
-                if (ocrHistory.length > MAX_OCR_HISTORY) ocrHistory.shift();
-            }
-        }
-    } catch (err) {
-        translationText.textContent = '翻译请求错误: ' + err.message;
-    }
-
-    isTranslating = false;
-}
 
 // OCR Region
 let ocrRegion = null;

@@ -169,3 +169,113 @@ std::vector<OCRResult> PerformOllamaOCR(
 
     return results;
 }
+
+// Translate text using Ollama API
+std::string TranslateText(
+    const std::string& prompt,
+    const std::string& target_lang,
+    const std::string& model_name,
+    const std::string& ollama_url
+) {
+    std::cout << "[TranslateText] === START ===" << std::endl;
+    std::cout << "[TranslateText] Target lang: " << target_lang << std::endl;
+    std::cout << "[TranslateText] Prompt length: " << prompt.length() << std::endl;
+    std::cout << "[TranslateText] Prompt preview: " << prompt.substr(0, 2000) << (prompt.length() > 2000 ? "..." : "") << std::endl;
+
+    if (prompt.empty()) {
+        std::cout << "[TranslateText] Empty prompt, returning" << std::endl;
+        return "";
+    }
+
+    std::string model = model_name.empty() ? "gemma4:26b" : model_name;
+    std::string url = ollama_url.empty() ? g_ollama_url : ollama_url;
+    std::cout << "[TranslateText] Model: " << model << std::endl;
+    std::cout << "[TranslateText] URL: " << url << std::endl;
+
+    @autoreleasepool {
+        // 使用 NSJSONSerialization 正确处理 UTF-8 编码
+        NSString* modelStr = [NSString stringWithUTF8String:model.c_str()];
+        NSString* promptStr = [NSString stringWithUTF8String:prompt.c_str()];
+
+        NSDictionary* jsonDict = @{
+            @"model": modelStr,
+            @"prompt": promptStr,
+            @"stream": @NO,
+            @"think": @NO  // 禁止模型输出推理过程，只输出结果
+        };
+
+        NSError* jsonError = nil;
+        NSData* requestBody = [NSJSONSerialization dataWithJSONObject:jsonDict options:0 error:&jsonError];
+
+        if (jsonError || requestBody == nil) {
+            std::cerr << "[TranslateText] Failed to create JSON: " << [[jsonError localizedDescription] UTF8String] << std::endl;
+            return "";
+        }
+
+        NSString* jsonString = [[NSString alloc] initWithData:requestBody encoding:NSUTF8StringEncoding];
+        std::cout << "[TranslateText] JSON request length: " << [jsonString length] << std::endl;
+
+        NSString* apiUrl = [NSString stringWithFormat:@"%s/api/generate", url.c_str()];
+        NSURL* nsUrl = [NSURL URLWithString:apiUrl];
+
+        std::cout << "[TranslateText] Sending request to: " << [apiUrl UTF8String] << std::endl;
+
+        NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:nsUrl];
+        [request setHTTPMethod:@"POST"];
+        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [request setHTTPBody:requestBody];
+        [request setTimeoutInterval:30.0];
+
+        NSError* error = nil;
+        NSData* responseData = nil;
+        NSURLResponse* response = nil;
+
+        auto start_time = std::chrono::high_resolution_clock::now();
+        responseData = [NSURLConnection sendSynchronousRequest:request returningResponse:&response error:&error];
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+        std::cout << "[TranslateText] Request elapsed: " << elapsed_ms << "ms" << std::endl;
+
+        if (error) {
+            std::cerr << "[TranslateText] API error: " << [[error localizedDescription] UTF8String] << std::endl;
+            return "";
+        }
+
+        if (responseData == nil || [responseData length] == 0) {
+            std::cerr << "[TranslateText] Empty response" << std::endl;
+            return "";
+        }
+
+        std::cout << "[TranslateText] Response length: " << [responseData length] << " bytes" << std::endl;
+
+        // Print raw response for debugging
+        NSString* rawResponse = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
+        std::cout << "[TranslateText] Raw response: " << [rawResponse UTF8String] << std::endl;
+
+        NSError* parseError = nil;
+        NSDictionary* json = [NSJSONSerialization JSONObjectWithData:responseData options:0 error:&parseError];
+
+        if (parseError) {
+            std::cerr << "[TranslateText] JSON parse error: " << [[parseError localizedDescription] UTF8String] << std::endl;
+            return "";
+        }
+
+        if (![json isKindOfClass:[NSDictionary class]]) {
+            std::cerr << "[TranslateText] JSON not a dictionary" << std::endl;
+            return "";
+        }
+
+        NSString* content = json[@"response"];
+        if (content && [content isKindOfClass:[NSString class]]) {
+            std::string result = std::string([content UTF8String]);
+            std::cout << "[TranslateText] Result: " << result.substr(0, 100) << (result.length() > 100 ? "..." : "") << std::endl;
+            std::cout << "[TranslateText] === END ===" << std::endl;
+            return result;
+        }
+
+        std::cerr << "[TranslateText] No 'response' field in JSON" << std::endl;
+        std::cout << "[TranslateText] === END (failed) ===" << std::endl;
+        return "";
+    }
+}

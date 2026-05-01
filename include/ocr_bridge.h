@@ -68,6 +68,18 @@ void SetOllamaConfig(const std::string& model, const std::string& url);
 std::string GetOllamaModel();
 std::string GetOllamaUrl();
 
+/// 使用 Ollama 进行翻译
+/// @param prompt 完整的翻译prompt（包含原文、上下文、要求等）
+/// @param target_lang 目标语言（如 "中文", "English", "日本語"）
+/// @param model_name Ollama 模型名称（默认使用配置的模型）
+/// @param ollama_url Ollama API 地址（默认使用配置的地址）
+std::string TranslateText(
+    const std::string& prompt,
+    const std::string& target_lang,
+    const std::string& model_name = "",
+    const std::string& ollama_url = ""
+);
+
 #ifdef USE_PADDLEOCR
 /// 设置 OCR 模型路径（用于 PaddleOCR）
 void SetOCRModelPaths(const std::string& det_path, const std::string& rec_path);
