@@ -338,12 +338,9 @@ int RunWebRemoteMode(const Options& options) {
 
                 if (!should_do_ocr) {
                     // 变化率低于阈值，跳过 OCR
-                    std::cout << "[OCR] Skip: change rate " << (change_rate * 100) << "% < threshold" << std::endl;
-                    // 但仍更新上一帧数据
                     last_ocr_data = ocr_data;
                     last_ocr_width = ocr_width;
                     last_ocr_height = ocr_height;
-                    // 小延迟避免循环太快占用CPU
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     continue;
                 }

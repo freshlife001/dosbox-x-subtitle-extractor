@@ -83,6 +83,20 @@ else()
     message(FATAL_ERROR "libwebsockets not found - install with: brew install libwebsockets")
 endif()
 
+# TurboJPEG (比 libjpeg 快 2-5 倍)
+find_library(TURBOJPEG_LIBRARY turbojpeg
+    PATHS /opt/homebrew/lib /usr/local/lib)
+find_path(TURBOJPEG_INCLUDE_DIR "turbojpeg.h"
+    PATHS /opt/homebrew/include /usr/local/include)
+if(TURBOJPEG_LIBRARY AND TURBOJPEG_INCLUDE_DIR)
+    message(STATUS "Found TurboJPEG: ${TURBOJPEG_LIBRARY}")
+    include_directories(${TURBOJPEG_INCLUDE_DIR})
+    target_link_libraries(subtitle_extractor PRIVATE ${TURBOJPEG_LIBRARY})
+    target_compile_definitions(subtitle_extractor PRIVATE HAVE_TURBOJPEG)
+else()
+    message(STATUS "TurboJPEG not found, using OpenCV imencode")
+endif()
+
 # macOS 特定框架
 if(APPLE)
     find_package(Threads REQUIRED)

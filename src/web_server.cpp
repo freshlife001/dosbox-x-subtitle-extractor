@@ -7,9 +7,15 @@
 #include <cstring>
 #include <chrono>
 #include <vector>
-#include <opencv2/opencv.hpp>
 
 #include <libwebsockets.h>
+
+// TurboJPEG (快速 JPEG 编码，比 OpenCV imencode 快 2-5 倍)
+#ifdef HAVE_TURBOJPEG
+#include <turbojpeg.h>
+#else
+#include <opencv2/opencv.hpp>
+#endif
 
 // Global server instance
 WebRemoteServer* g_web_server_instance = nullptr;
@@ -165,7 +171,7 @@ std::string WebRemoteServer::GetURL() const {
 
 void WebRemoteServer::ServiceLoop() {
     auto last_frame_time = std::chrono::high_resolution_clock::now();
-    constexpr int FRAME_INTERVAL_MS = 33;  // ~30 FPS
+    constexpr int FRAME_INTERVAL_MS = 16;  // ~60 FPS
 
     while (m_running) {
         // 先处理 lws 事件（快速返回）
@@ -236,30 +242,62 @@ void WebRemoteServer::ServiceLoop() {
 }
 
 void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uint16_t width, uint16_t height) {
-    // 将 BGRA 数据转换为 JPEG 以减少传输大小
     std::vector<uint8_t> message;
 
     if (!frame_data.empty() && width > 0 && height > 0) {
-        // 创建 OpenCV Mat (BGRA 格式)
-        cv::Mat mat(height, width, CV_8UC4, (void*)frame_data.data());
+#ifdef HAVE_TURBOJPEG
+        // 使用 TurboJPEG (比 OpenCV imencode 快 2-5 倍)
+        static tjhandle tj_compressor = tjInitCompress();
 
-        // 转换为 BGR (JPEG 编码需要)
-        cv::Mat bgr;
-        cv::cvtColor(mat, bgr, cv::COLOR_BGRA2BGR);
+        if (tj_compressor) {
+            unsigned char* jpeg_buf = nullptr;
+            unsigned long jpeg_size = 0;
 
-        // 编码为 JPEG
-        std::vector<uint8_t> jpeg_data;
-        std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 80};  // 80% 质量
-        if (cv::imencode(".jpg", bgr, jpeg_data, params)) {
-            // 构建消息: 类型(0x02表示JPEG) + width + height + JPEG数据
-            message.push_back(0x02);  // JPEG frame type
-            message.push_back(width & 0xFF);
-            message.push_back((width >> 8) & 0xFF);
-            message.push_back(height & 0xFF);
-            message.push_back((height >> 8) & 0xFF);
-            message.insert(message.end(), jpeg_data.begin(), jpeg_data.end());
+            // 先分配足够大的缓冲区 (JPEG 最大不会超过原始数据)
+            jpeg_buf = (unsigned char*)tjAlloc(frame_data.size());
+            if (!jpeg_buf) {
+                std::cerr << "[TurboJPEG] tjAlloc failed" << std::endl;
+            }
+
+            int result = tjCompress2(tj_compressor,
+                                     frame_data.data(),
+                                     width,
+                                     width * 4,  // pitch = width * 4 bytes (BGRA)
+                                     height,
+                                     TJPF_BGRA,
+                                     &jpeg_buf,
+                                     &jpeg_size,
+                                     TJSAMP_420,
+                                     60,
+                                     TJFLAG_FASTDCT);
+
+            if (result == 0 && jpeg_buf && jpeg_size > 0) {
+                message.push_back(0x02);
+                message.push_back(width & 0xFF);
+                message.push_back((width >> 8) & 0xFF);
+                message.push_back(height & 0xFF);
+                message.push_back((height >> 8) & 0xFF);
+                message.insert(message.end(), jpeg_buf, jpeg_buf + jpeg_size);
+
+                static int log_count = 0;
+                if (log_count++ % 30 == 0) {
+                    std::cout << "[TurboJPEG] " << width << "x" << height
+                              << ": " << frame_data.size() << " -> " << jpeg_size << " bytes" << std::endl;
+                }
+            } else {
+                std::cerr << "[TurboJPEG] tjCompress2 failed: " << tjGetErrorStr() << std::endl;
+                // 发送原始数据
+                message.push_back(0x01);
+                message.push_back(width & 0xFF);
+                message.push_back((width >> 8) & 0xFF);
+                message.push_back(height & 0xFF);
+                message.push_back((height >> 8) & 0xFF);
+                message.insert(message.end(), frame_data.begin(), frame_data.end());
+            }
+
+            if (jpeg_buf) tjFree(jpeg_buf);
         } else {
-            // JPEG 编码失败，发送原始数据
+            std::cerr << "[TurboJPEG] tjInitCompress failed" << std::endl;
             message.push_back(0x01);
             message.push_back(width & 0xFF);
             message.push_back((width >> 8) & 0xFF);
@@ -267,10 +305,33 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
             message.push_back((height >> 8) & 0xFF);
             message.insert(message.end(), frame_data.begin(), frame_data.end());
         }
+#else
+        // 使用 OpenCV imencode
+        cv::Mat mat(height, width, CV_8UC4, (void*)frame_data.data());
+        cv::Mat bgr;
+        cv::cvtColor(mat, bgr, cv::COLOR_BGRA2BGR);
+
+        std::vector<uint8_t> jpeg_data;
+        std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 60};
+        if (cv::imencode(".jpg", bgr, jpeg_data, params)) {
+            message.push_back(0x02);
+            message.push_back(width & 0xFF);
+            message.push_back((width >> 8) & 0xFF);
+            message.push_back(height & 0xFF);
+            message.push_back((height >> 8) & 0xFF);
+            message.insert(message.end(), jpeg_data.begin(), jpeg_data.end());
+        } else {
+            message.push_back(0x01);
+            message.push_back(width & 0xFF);
+            message.push_back((width >> 8) & 0xFF);
+            message.push_back(height & 0xFF);
+            message.push_back((height >> 8) & 0xFF);
+            message.insert(message.end(), frame_data.begin(), frame_data.end());
+        }
+#endif
     }
 
     std::lock_guard<std::mutex> lock(m_queueMutex);
-    // 只保留最新帧，丢弃旧的
     m_frameQueue.clear();
     if (!message.empty()) {
         m_frameQueue.push_back(std::move(message));
@@ -377,7 +438,6 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_RECEIVE: {
             std::string message((const char*)in, len);
-            std::cout << "[WS] Message: " << message.length() << " bytes" << std::endl;
 
             if (message.find("\"type\":\"input\"") != std::string::npos) {
                 uint32_t key_states[8] = {0};
