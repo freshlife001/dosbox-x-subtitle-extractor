@@ -417,13 +417,14 @@ int RunWebRemoteMode(const Options& options) {
                         context_lines += "原文：" + item.first + "\n翻译：" + item.second + "\n\n";
                     }
 
-                    std::string prompt = "这是日本游戏的屏幕文字。请直接将其翻译为" + target_lang + "。\n\n"
+                    std::string prompt = "这是日本游戏的屏幕文字。请直接将其翻译为" + target_lang + "。上下文仅供参考，不要翻译上下文。\n\n"
+                        "上下文（仅供参考）：\n" + (context_lines.empty() ? "无" : context_lines) + "\n"
+                        "原文（需要翻译）：\n" + current_text + "\n\n"
                         "注意：\n"
-                        "1. 即使文字看起来有编码问题，也要尽力翻译\n"
-                        "2. 只输出翻译结果，不要解释编码问题\n"
-                        "3. 不要输出英文或任何其他语言\n"
-                        "4. 游戏数值(如HP、MP、等级等)保留原样\n\n"
-                        "原文：\n" + current_text + "\n\n"
+                        "1. 只翻译原文，不要翻译上下文\n"
+                        "2. 即使文字有编码问题也要尽力翻译\n"
+                        "3. 只输出翻译结果，不要解释\n"
+                        "4. 游戏数值(如HP、MP等)保留原样\n\n"
                         "翻译结果：";
 
                     auto trans_start = std::chrono::high_resolution_clock::now();
