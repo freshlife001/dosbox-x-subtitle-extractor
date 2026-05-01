@@ -24,6 +24,12 @@
 
         /* 移动端适配 */
         @media (max-width: 600px), (pointer: coarse) {
+            #screen-container {
+                flex-direction: column;
+                justify-content: flex-start;
+                align-items: center;
+                padding-top: 20px;
+            }
             #menu-toggle { display: block; }
             #info { font-size: 9px; top: 2px; left: 2px; }
             #connection-status { font-size: 9px; top: 2px; right: 2px; }
@@ -64,8 +70,9 @@
 
         /* 竖屏优化 */
         @media (max-width: 600px) and (orientation: portrait) {
-            canvas { max-height: 50vh; }
-            #output-box { max-height: 35vh; min-height: 100px; }
+            #screen-container { padding-top: 22px; }
+            canvas { max-height: 45vh; margin-top: 0; }
+            #output-box { max-height: 40vh; min-height: 100px; }
         }
     </style>
 </head>
