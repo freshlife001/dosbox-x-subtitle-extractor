@@ -174,8 +174,8 @@ void WebRemoteServer::ServiceLoop() {
     constexpr int FRAME_INTERVAL_MS = 16;  // ~60 FPS
 
     while (m_running) {
-        // 先处理 lws 事件（快速返回）
-        lws_service(m_context, 0);
+        // lws_service 处理所有事件，最多等待 1ms
+        lws_service(m_context, 1);
 
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_time).count();
@@ -216,16 +216,13 @@ void WebRemoteServer::ServiceLoop() {
             if (!broadcast_data.empty()) {
                 BroadcastFrame(broadcast_data, bw, bh);
 
-                // 立即触发 writable 并处理
+                // 触发 writable
                 {
                     std::lock_guard<std::mutex> lock(m_clientsMutex);
                     for (lws* wsi : m_wsiClients) {
                         lws_callback_on_writable(wsi);
                     }
                 }
-
-                // 立即处理发送
-                lws_service(m_context, 5);
             }
         }
 
@@ -236,8 +233,6 @@ void WebRemoteServer::ServiceLoop() {
                 lws_cancel_service(m_context);
             }
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -249,6 +244,11 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
         // 使用 TurboJPEG (比 OpenCV imencode 快 2-5 倍)
         static tjhandle tj_compressor = tjInitCompress();
 
+        // 编码延迟统计
+        static double total_encode_time = 0;
+        static int encode_count = 0;
+        static auto last_stats_time = std::chrono::high_resolution_clock::now();
+
         if (tj_compressor) {
             unsigned char* jpeg_buf = nullptr;
             unsigned long jpeg_size = 0;
@@ -258,6 +258,9 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
             if (!jpeg_buf) {
                 std::cerr << "[TurboJPEG] tjAlloc failed" << std::endl;
             }
+
+            // 记录编码开始时间
+            auto encode_start = std::chrono::high_resolution_clock::now();
 
             int result = tjCompress2(tj_compressor,
                                      frame_data.data(),
@@ -271,6 +274,25 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
                                      60,
                                      TJFLAG_FASTDCT);
 
+            // 记录编码结束时间
+            auto encode_end = std::chrono::high_resolution_clock::now();
+            double encode_ms = std::chrono::duration<double, std::milli>(encode_end - encode_start).count();
+            total_encode_time += encode_ms;
+            encode_count++;
+
+            // 每秒打印统计
+            auto now = std::chrono::high_resolution_clock::now();
+            double stats_elapsed = std::chrono::duration<double>(now - last_stats_time).count();
+            if (stats_elapsed >= 1.0) {
+                double avg_ms = total_encode_time / encode_count;
+                double fps = encode_count / stats_elapsed;
+                std::cout << "[TurboJPEG Stats] FPS: " << fps << " | Avg latency: " << avg_ms << "ms"
+                          << " | Total frames: " << encode_count << std::endl;
+                total_encode_time = 0;
+                encode_count = 0;
+                last_stats_time = now;
+            }
+
             if (result == 0 && jpeg_buf && jpeg_size > 0) {
                 message.push_back(0x02);
                 message.push_back(width & 0xFF);
@@ -278,12 +300,6 @@ void WebRemoteServer::BroadcastFrame(const std::vector<uint8_t>& frame_data, uin
                 message.push_back(height & 0xFF);
                 message.push_back((height >> 8) & 0xFF);
                 message.insert(message.end(), jpeg_buf, jpeg_buf + jpeg_size);
-
-                static int log_count = 0;
-                if (log_count++ % 30 == 0) {
-                    std::cout << "[TurboJPEG] " << width << "x" << height
-                              << ": " << frame_data.size() << " -> " << jpeg_size << " bytes" << std::endl;
-                }
             } else {
                 std::cerr << "[TurboJPEG] tjCompress2 failed: " << tjGetErrorStr() << std::endl;
                 // 发送原始数据
@@ -500,14 +516,31 @@ static int callback_ws(struct lws *wsi, enum lws_callback_reasons reason,
                 srv->m_ocrQueue.clear();
             }
 
+            // 发送帧数据，限制60FPS
             if (!srv->m_frameQueue.empty()) {
-                for (const auto& msg : srv->m_frameQueue) {
+                static auto last_send_time = std::chrono::high_resolution_clock::now();
+                constexpr int SEND_INTERVAL_MS = 16;  // ~60 FPS
+                auto now = std::chrono::high_resolution_clock::now();
+                auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send_time).count();
+
+                if (elapsed_ms >= SEND_INTERVAL_MS) {
+                    last_send_time = now;
+                    const auto& msg = srv->m_frameQueue.back();
                     size_t total_size = LWS_PRE + msg.size();
                     std::vector<unsigned char> buf(total_size);
                     memcpy(&buf[LWS_PRE], msg.data(), msg.size());
                     lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_BINARY);
+
+                    // 发送统计
+                    static int send_count = 0;
+                    static auto last_stats = std::chrono::high_resolution_clock::now();
+                    send_count++;
+                    if (std::chrono::duration<double>(now - last_stats).count() >= 1.0) {
+                        std::cout << "[WS Send] FPS: " << send_count << std::endl;
+                        send_count = 0;
+                        last_stats = now;
+                    }
                 }
-                srv->m_frameQueue.clear();
             }
 
             // 总是请求下一次 writable，保持发送循环

@@ -123,6 +123,10 @@ function connectWebSocket() {
     };
 }
 
+// Frame queue for requestAnimationFrame rendering
+    let frameQueue = [];
+    const MAX_QUEUE_SIZE = 2;  // Only keep latest 2 frames
+
 function handleFrameData(data) {
     const view = new DataView(data);
     const type = view.getUint8(0);
@@ -133,30 +137,13 @@ function handleFrameData(data) {
 
         if (width < 32 || height < 32 || width > 2048 || height > 2048) return;
 
-        // JPEG data (skip 5-byte header)
-        const jpegData = new Uint8Array(data, 5);
-        const blob = new Blob([jpegData], {type: 'image/jpeg'});
+        // Extract JPEG data (skip 5-byte header) and store
+        const jpegData = new Uint8Array(data).slice(5);
 
-        // Use createImageBitmap - no blob URL needed
-        createImageBitmap(blob).then(imageBitmap => {
-            if (canvas.width !== width || canvas.height !== height) {
-                canvas.width = width;
-                canvas.height = height;
-            }
-            ctx.drawImage(imageBitmap, 0, 0);
-            imageBitmap.close();  // Release bitmap memory
-
-            showRegionOverlay();
-
-            // FPS
-            frameCount++;
-            const now = performance.now();
-            if (now - lastTime >= 1000) {
-                fpsSpan.textContent = frameCount;
-                frameCount = 0;
-                lastTime = now;
-            }
-        }).catch(err => console.error('[JPEG] Decode error:', err));
+        if (frameQueue.length >= MAX_QUEUE_SIZE) {
+            frameQueue.shift();  // Drop oldest
+        }
+        frameQueue.push({type: 'jpeg', width, height, jpegData});
 
     } else if (type === 0x01) {  // Raw BGRA frame type (fallback)
         const width = view.getUint16(1, true);
@@ -164,27 +151,48 @@ function handleFrameData(data) {
 
         if (width < 32 || height < 32 || width > 2048 || height > 2048) return;
 
-        const frameData = new Uint8Array(data, 5);
+        const rawData = new Uint8Array(data).slice(5);
 
-        // Update canvas
-        if (canvas.width !== width || canvas.height !== height) {
-            canvas.width = width;
-            canvas.height = height;
+        if (frameQueue.length >= MAX_QUEUE_SIZE) {
+            frameQueue.shift();
+        }
+        frameQueue.push({type: 'raw', width, height, rawData});
+    }
+}
+
+// requestAnimationFrame rendering loop
+function renderLoop() {
+    if (frameQueue.length > 0) {
+        const frame = frameQueue.shift();
+
+        if (frame.type === 'jpeg') {
+            const blob = new Blob([frame.jpegData], {type: 'image/jpeg'});
+            createImageBitmap(blob).then(imageBitmap => {
+                if (canvas.width !== frame.width || canvas.height !== frame.height) {
+                    canvas.width = frame.width;
+                    canvas.height = frame.height;
+                }
+                ctx.drawImage(imageBitmap, 0, 0);
+                imageBitmap.close();
+                showRegionOverlay();
+            }).catch(err => console.error('[JPEG] Decode error:', err));
+        } else if (frame.type === 'raw') {
+            if (canvas.width !== frame.width || canvas.height !== frame.height) {
+                canvas.width = frame.width;
+                canvas.height = frame.height;
+            }
+            const frameData = frame.rawData;
+            const imageData = ctx.createImageData(frame.width, frame.height);
+            for (let i = 0; i < frame.width * frame.height * 4; i += 4) {
+                imageData.data[i + 0] = frameData[i + 2];
+                imageData.data[i + 1] = frameData[i + 1];
+                imageData.data[i + 2] = frameData[i + 0];
+                imageData.data[i + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            showRegionOverlay();
         }
 
-        // BGRA to RGBA
-        const imageData = ctx.createImageData(width, height);
-        for (let i = 0; i < width * height * 4; i += 4) {
-            imageData.data[i + 0] = frameData[i + 2]; // R
-            imageData.data[i + 1] = frameData[i + 1]; // G
-            imageData.data[i + 2] = frameData[i + 0]; // B
-            imageData.data[i + 3] = 255;              // A
-        }
-
-        ctx.putImageData(imageData, 0, 0);
-        showRegionOverlay();
-
-        // FPS
         frameCount++;
         const now = performance.now();
         if (now - lastTime >= 1000) {
@@ -193,7 +201,9 @@ function handleFrameData(data) {
             lastTime = now;
         }
     }
+    requestAnimationFrame(renderLoop);
 }
+requestAnimationFrame(renderLoop);
 
 function handleTextMessage(message) {
     try {
