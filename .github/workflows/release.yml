@@ -1,0 +1,115 @@
+name: Build Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install opencv libwebsockets turbojpeg
+
+      - name: Build
+        run: |
+          cmake -B build
+          cmake --build build
+
+      - name: Upload binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/subtitle_extractor
+          asset_name: subtitle_extractor-macos-arm64
+          asset_content_type: application/octet-stream
+
+  build-macos-x64:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install opencv libwebsockets turbojpeg
+
+      - name: Build
+        run: |
+          cmake -B build
+          cmake --build build
+
+      - name: Rename binary
+        run: mv build/subtitle_extractor build/subtitle_extractor-macos-x64
+
+      - name: Upload binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/subtitle_extractor-macos-x64
+          asset_name: subtitle_extractor-macos-x64
+          asset_content_type: application/octet-stream
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcpkg
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.bat
+          ./vcpkg install opencv4 libwebsockets turbojpeg:x64-windows
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+          cmake --build build --config Release
+
+      - name: Rename binary
+        run: mv build/Release/subtitle_extractor.exe build/subtitle_extractor-windows-x64.exe
+
+      - name: Upload binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/subtitle_extractor-windows-x64.exe
+          asset_name: subtitle_extractor-windows-x64.exe
+          asset_content_type: application/octet-stream
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopencv-dev libwebsockets-dev libturbojpeg0-dev
+
+      - name: Build
+        run: |
+          cmake -B build
+          cmake --build build
+
+      - name: Rename binary
+        run: mv build/subtitle_extractor build/subtitle_extractor-linux-x64
+
+      - name: Upload binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/subtitle_extractor-linux-x64
+          asset_name: subtitle_extractor-linux-x64
+          asset_content_type: application/octet-stream
