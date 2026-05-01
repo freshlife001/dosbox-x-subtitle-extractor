@@ -249,10 +249,6 @@ std::string TranslateText(
 
         std::cout << "[TranslateText] Response length: " << [responseData length] << " bytes" << std::endl;
 
-        // Print raw response for debugging
-        NSString* rawResponse = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
-        std::cout << "[TranslateText] Raw response: " << [rawResponse UTF8String] << std::endl;
-
         NSError* parseError = nil;
         NSDictionary* json = [NSJSONSerialization JSONObjectWithData:responseData options:0 error:&parseError];
 
